@@ -15,6 +15,7 @@ import type {
   ChildProfile,
   HelperMessage,
   LearnerNotes,
+  LibraryItem,
   RewardRecord,
   SessionRecord,
   Settings,
@@ -45,6 +46,8 @@ export class IntelliLearnDB extends Dexie {
   usage!: EntityTable<UsageRecord, 'day'>;
   stories!: EntityTable<StoryRecord, 'id'>;
   weeklyReports!: EntityTable<WeeklyReport, 'id'>;
+  /** Canvas library shared by all children on the device. Not a per-child table. */
+  library!: EntityTable<LibraryItem, 'id'>;
   kv!: Table<KeyValueRecord, string>;
 
   constructor(name = 'intelli-learn') {
@@ -64,6 +67,7 @@ export class IntelliLearnDB extends Dexie {
       usage: 'day',
       stories: 'id, childId, [childId+status]',
       weeklyReports: 'id, childId, [childId+weekStart]',
+      library: 'id, fingerprint, skillId, [skillId+grade+interaction], [strand+grade], rating, createdAt',
       kv: 'key',
     });
   }

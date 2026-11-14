@@ -63,8 +63,13 @@ export type Mode = (typeof MODES)[number];
 export const LOCALES = ['en', 'es', 'hi'] as const;
 export type Locale = (typeof LOCALES)[number];
 
-/** Why this item was chosen for the child. */
-export type ItemPurpose = 'placement' | 'core' | 'review' | 'stretch' | 'sibling';
+/**
+ * Why this item was chosen for the child.
+ * - check: a concept check ("back test"). The child's mastery says they are ready
+ *   to move up, so the same concept is tested once more with a NEW challenge in a
+ *   different format and context. The stage only rises when the check is passed.
+ */
+export type ItemPurpose = 'placement' | 'core' | 'review' | 'stretch' | 'sibling' | 'check';
 
 /**
  * How much the child did themselves, best to most-assisted.
@@ -242,6 +247,15 @@ export interface SkillState {
   /** Consecutive independent solves. */
   independentStreak: number;
   attempts: number;
+  /**
+   * True when mastery reached the step-up threshold and the concept must now be
+   * confirmed with a concept check item before the stage rises.
+   */
+  checkPending: boolean;
+  /** Concept checks passed on this skill (lifetime). */
+  checksPassed: number;
+  /** Interaction kinds of the most recent items on this skill, newest first (max 4). Used to vary the format. */
+  recentInteractions: InteractionKind[];
   lastPracticedAt: number | null;
   /** Spaced review: epoch ms when this skill is next due, or null. */
   reviewDueAt: number | null;
@@ -298,12 +312,53 @@ export interface ChallengeRecord {
   /** Set when the challenge belongs to a Story Quest. */
   storyId: string | null;
   chapterIndex: number | null;
-  /** Parent feedback from the history view. */
-  parentRating: 'up' | 'down' | null;
+  /** The canvas library item this challenge was saved as, or taken from. */
+  libraryId: string | null;
+  /** Parent rating from the history view, 1-5 stars. Mirrors the library item's rating. */
+  parentRating: number | null;
   parentNote: string;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
+}
+
+/**
+ * Canvas library: every validated AI-built challenge ("canvas") is kept here so
+ * parents can review and rate it, and so it can be reused or remixed for
+ * another child at the same level instead of being generated again.
+ * The library never contains anything about a child except opaque ids.
+ */
+export interface LibraryItem {
+  id: string;
+  /** Stable hash of the question text and answer key, used to avoid duplicates. */
+  fingerprint: string;
+  skillId: string;
+  strand: Strand;
+  stage: StageValue;
+  /** Grade of `stage`, stored for indexing. */
+  grade: Grade;
+  interaction: InteractionKind;
+  mode: Mode;
+  theme: string;
+  ageGroup: AgeGroup;
+  locale: Locale;
+  content: Challenge;
+  origin: 'ai' | 'remix';
+  /** Library item this one was remixed from, if any. */
+  remixOf: string | null;
+  /** Parent rating 1-5 stars, or null when not rated yet. */
+  rating: number | null;
+  ratingNote: string;
+  /** Retired items are never served again. Rating 1 or 2 retires an item automatically. */
+  retired: boolean;
+  /** Ids of the children who have been served this item. */
+  seenBy: string[];
+  uses: number;
+  /** How children did on it, to spot items that are too hard, too easy or confusing. */
+  independentSolves: number;
+  assistedSolves: number;
+  createdAt: number;
+  lastUsedAt: number | null;
 }
 
 export interface AnswerEvent {

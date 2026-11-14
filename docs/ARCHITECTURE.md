@@ -38,6 +38,7 @@ Playwright. Import alias: `@/` = `src/`.
 | `src/voice` | Text-to-speech and speech-to-text behind one interface | core |
 | `src/i18n` | UI strings and `t()` | core |
 | `src/ui` | Shared React components and theme | core, i18n |
+| `src/library` | Canvas library: keep, rate, reuse and remix built challenges | core, data |
 | `src/play` | Challenge supply queue, play screen, help ladder, teach-back | everything above, bot |
 | `src/bot` | Floating helper bot | core, ai, voice, ui, play store |
 | `src/child` | Profile picker, adventure map home, mode launcher, rewards shelf | core, data, progression, ui |
@@ -120,6 +121,47 @@ resumes when they return.
 help), `second-try` (wrong tries, no help), `nudge`, `hint`, `walkthrough`.
 The progression module turns an outcome into a mastery change and possibly a
 stage change (see `src/progression`).
+
+### Concept checks (back testing)
+
+Mastery alone never raises a stage. When a skill's mastery reaches the step-up
+threshold, the skill is marked `checkPending` and the child's next item on that
+skill is a **concept check** (`purpose: 'check'`): a brand-new challenge on the
+same grade expectation, in a different interaction kind from the skill's
+`recentInteractions` where the skill offers one, and in a different context.
+The AI is told the previous questions so it tests the same idea in a new way.
+
+- Check solved `independent` or `second-try`: the stage steps up, `checksPassed`
+  increases, a spaced review is scheduled, `checkPending` clears.
+- Check solved with a `nudge` or `hint`: no step up, mastery drops to 60,
+  `checkPending` clears (more practice, then another check).
+- Check needed a `walkthrough`: no step up, mastery drops to 40, `checkPending` clears.
+
+Spaced reviews (2, 7, 21 days) re-test old concepts later, and a walkthrough is
+always followed by an easier sibling item. Together these make sure a level
+shown to the parent reflects understanding, not a lucky streak.
+
+### Canvas library (keep, rate, reuse, remix)
+
+Every AI-built challenge that passes validation is saved as a `LibraryItem`
+(`db.library`), which is shared by all children on the device.
+
+- **Keep.** Parents can browse every built canvas, replay it exactly as the
+  child saw it, and see how children did on it.
+- **Rate.** Parents rate canvases 1-5 stars with an optional note. A rating of
+  1 or 2 retires the item so it is never served again, and its note is passed
+  to future generations as something to avoid. Ratings of 4 or 5 mark it as preferred.
+- **Reuse.** Before asking the AI, the supply queue looks for a library item
+  with the same skill, grade and interaction, a compatible age group and
+  locale, not retired, and not yet seen by this child. A fitting item is served
+  as-is (`source: 'reused'`), which is instant and free.
+- **Remix.** When the item's theme does not match this child's interests and
+  the AI is available, the item is remixed instead: same concept and structure,
+  new theme, new numbers and details (`remixChallenge`). The remix is saved as
+  a new library item with `remixOf` set.
+- To keep content fresh, at most about half of a child's queue comes from the
+  library, concept checks are never served from items the child has seen, and
+  procedural offline items are not stored in the library.
 
 ## Public contracts
 
@@ -264,6 +306,8 @@ export interface GenerateChallengeRequest {
   studioIdea?: string;              // Imagination Studio: what the child asked to see
   story?: { title: string; heading: string; narrative: string; illustration: string };
   previousSibling?: { question: string };   // generate an easier sibling of this item
+  /** plan.purpose === 'check': recent questions on this skill; the new item must test the same concept in a NEW way. */
+  conceptCheck?: { previousQuestions: string[] };
   signal?: AbortSignal;
 }
 /** Never throws. Falls back to `pickOfflineChallenge` when the provider is 'demo', the budget is spent, or generation fails. */
@@ -285,6 +329,13 @@ export interface TutorRequest {
 }
 /** Never throws. Without AI it answers from the challenge's own hints, walkthrough and explanation. */
 export function tutorReply(req: TutorRequest): Promise<TutorReply>;
+
+/**
+ * Re-themes a library item for another child: same concept, grade and interaction kind, new theme,
+ * new numbers and details, new scene. Returns null when the AI is unavailable or the result fails
+ * validation or safety (the caller then serves the original as-is).
+ */
+export function remixChallenge(req: { original: Challenge; plan: ChallengePlan; child: ChildContext; expectation: { grade: Grade; text: string }; skillName: string; signal?: AbortSignal }): Promise<Challenge | null>;
 
 export function generateStoryOutline(req: { child: ChildContext; theme: string; chapters: number; signal?: AbortSignal }): Promise<StoryOutline>; // never throws; offline fallback story
 export function generateLearnerNotes(req: { child: ChildContext; attempts: { skill: string; grade: Grade; outcome: AttemptOutcome; question: string; misconceptions: string[] }[] }): Promise<LearnerNotesOutput | null>;
@@ -320,6 +371,8 @@ export interface RecordAttemptInput {
 }
 /** Writes the attempt, updates skill state, stage history, rewards, streak, companion, and marks the challenge completed. */
 export function recordAttempt(input: RecordAttemptInput): Promise<AttemptResult>;
+// Concept checks: see "Concept checks (back testing)". planNext emits purpose 'check' for skills with checkPending
+// (these take priority over everything except placement), and recordAttempt applies the check rules.
 export function outcomeOf(input: Pick<RecordAttemptInput, 'answers' | 'hintsUsed' | 'walkthroughUsed'>): AttemptOutcome;
 export function getStrandStages(childId: string): Promise<StrandStage[]>;
 export function getPlayAllowance(childId: string, now?: number): Promise<PlayAllowance>;
@@ -368,6 +421,24 @@ Shared, touch-friendly components: `Button`, `BigButton`, `IconButton`, `Card`,
 `ConfirmDialog`, and `applyAccessibility(settings | null)` which sets classes
 on `<html>` (`a11y-dyslexia`, `a11y-large`, `a11y-contrast`, `a11y-calm`).
 Theme tokens live in `src/index.css`.
+
+### `@/library`
+
+```ts
+export function fingerprintOf(content: Challenge): string;
+/** Saves a validated AI-built challenge. Returns the existing item when the fingerprint is already stored. */
+export function saveToLibrary(input: { content: Challenge; plan: ChallengePlan; ageGroup: AgeGroup; locale: Locale; origin: 'ai' | 'remix'; remixOf?: string | null }): Promise<LibraryItem>;
+/** Best unseen, non-retired item for the plan and child, or null. Prefers higher ratings, then fewer uses. */
+export function findReusable(plan: ChallengePlan, child: { id: string; ageGroup: AgeGroup; interests: string[] }, locale: Locale): Promise<{ item: LibraryItem; themeFits: boolean } | null>;
+export function markServed(libraryId: string, childId: string): Promise<void>;
+export function recordLibraryOutcome(libraryId: string, outcome: AttemptOutcome): Promise<void>;
+/** Sets the rating (1-5 or null) and note, retires on 1-2, and mirrors the rating to challenges that point at the item. */
+export function rateLibraryItem(libraryId: string, rating: number | null, note?: string): Promise<LibraryItem>;
+export function setRetired(libraryId: string, retired: boolean): Promise<void>;
+/** Notes from low-rated items for this skill, passed to the AI as things to avoid. */
+export function avoidNotesFor(skillId: string): Promise<string[]>;
+export function libraryStats(): Promise<{ total: number; rated: number; retired: number; reusedServes: number }>;
+```
 
 ### `@/play`
 
