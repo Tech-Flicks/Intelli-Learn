@@ -1,0 +1,42 @@
+@import 'tailwindcss';
+
+/*
+ * Theme tokens. The platform module (src/ui) owns this file.
+ * Accessibility classes are set on <html> by applyAccessibility().
+ */
+@theme {
+  --color-brand-50: #f1efff;
+  --color-brand-100: #e2deff;
+  --color-brand-300: #a99cf5;
+  --color-brand-500: #5b4bdb;
+  --color-brand-600: #4a3bc4;
+  --color-brand-700: #3b2ea0;
+  --color-sun-300: #ffe38a;
+  --color-sun-400: #ffd54a;
+  --color-sun-500: #f5b800;
+  --color-leaf-400: #4cc38a;
+  --color-leaf-600: #1f8f5c;
+  --color-coral-400: #ff8a7a;
+  --color-coral-600: #d9483a;
+  --color-ink-900: #1f1a3d;
+  --color-ink-700: #3d3766;
+  --color-ink-500: #6b668f;
+  --color-paper: #fbfaff;
+  --font-display: 'Baloo 2', 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+  --font-body: 'Nunito', ui-rounded, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--color-ink-900);
+  background: var(--color-paper);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
