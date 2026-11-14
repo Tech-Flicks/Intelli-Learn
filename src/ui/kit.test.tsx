@@ -64,9 +64,10 @@ describe('Button', () => {
         Save
       </Button>,
     );
-    const button = screen.getByRole('button');
+    const button = screen.getByRole('button', { name: 'Save' });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     await user.click(button);
     expect(onClick).not.toHaveBeenCalled();
   });

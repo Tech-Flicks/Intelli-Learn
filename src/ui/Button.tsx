@@ -64,7 +64,8 @@ export function Button({
       )}
     >
       {loading ? (
-        <Spinner size="sm" onColor={variant === 'primary' || variant === 'danger'} />
+        // `aria-busy` reports the state; the spinner must not change the button's name.
+        <Spinner decorative size="sm" onColor={variant === 'primary' || variant === 'danger'} />
       ) : (
         icon !== undefined && <span aria-hidden="true">{icon}</span>
       )}

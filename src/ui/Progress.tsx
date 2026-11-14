@@ -27,22 +27,36 @@ export interface SpinnerProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'chi
   showLabel?: boolean;
   /** Use on a coloured background (inside a primary button). */
   onColor?: boolean;
+  /** Only the picture: no status role and no label. For places that already say what is loading. */
+  decorative?: boolean;
 }
 
-export function Spinner({ size = 'md', label, showLabel = false, onColor = false, className, ...rest }: SpinnerProps) {
+export function Spinner({
+  size = 'md',
+  label,
+  showLabel = false,
+  onColor = false,
+  decorative = false,
+  className,
+  ...rest
+}: SpinnerProps) {
   const t = useT();
-  const text = label ?? t('ui.loading');
+  const ring = (
+    <span
+      aria-hidden="true"
+      className={cx(
+        'inline-block shrink-0 animate-spin rounded-full',
+        SPINNER_SIZE[size],
+        onColor ? 'border-white/40 border-t-white' : 'border-brand-100 border-t-brand-500',
+        decorative && className,
+      )}
+    />
+  );
+  if (decorative) return ring;
   return (
-    <span role="status" className={cx('inline-flex items-center gap-2', className)} {...rest}>
-      <span
-        aria-hidden="true"
-        className={cx(
-          'inline-block animate-spin rounded-full',
-          SPINNER_SIZE[size],
-          onColor ? 'border-white/40 border-t-white' : 'border-brand-100 border-t-brand-500',
-        )}
-      />
-      <span className={showLabel ? 'text-sm font-semibold text-ink-700' : 'sr-only'}>{text}</span>
+    <span role="status" {...rest} className={cx('inline-flex items-center gap-2', className)}>
+      {ring}
+      <span className={showLabel ? 'text-sm font-semibold text-ink-700' : 'sr-only'}>{label ?? t('ui.loading')}</span>
     </span>
   );
 }

@@ -234,7 +234,7 @@ describe('ConfirmDialog', () => {
     expect(screen.getByRole('button', { name: 'OK' })).toHaveFocus();
     rerender(<ConfirmDialog open title="Start?" busy onConfirm={() => {}} onCancel={onCancel} />);
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /OK/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'OK' })).toBeDisabled();
     await user.keyboard('{Escape}');
     expect(onCancel).not.toHaveBeenCalled();
   });
