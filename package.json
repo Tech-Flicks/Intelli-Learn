@@ -16,6 +16,9 @@
     "proxy": "node server/proxy/server.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/nunito": "^5.3.0",
+    "@fontsource/baloo-2": "^5.3.0",
+    "@fontsource/opendyslexic": "^5.3.0",
     "dexie": "^4.4.7",
     "dexie-react-hooks": "^4.4.0",
     "dompurify": "^3.4.18",
