@@ -43,7 +43,7 @@ export interface Labelled {
 
 /** What the child sees. Two items with the same signature are interchangeable. */
 export function signatureOf(item: { label: string; emoji?: string | undefined }): string {
-  return `${item.emoji ?? ''}\u0000${item.label.trim().toLowerCase()}`;
+  return JSON.stringify([item.emoji ?? '', item.label.trim().toLowerCase()]);
 }
 
 /**

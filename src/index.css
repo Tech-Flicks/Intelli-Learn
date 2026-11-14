@@ -1,42 +1,360 @@
 @import 'tailwindcss';
 
 /*
+ * Self-hosted fonts (bundled by Vite, cached by the service worker).
+ * Nothing is fetched from a font CDN.
+ */
+@import '@fontsource-variable/nunito/wght.css';
+@import '@fontsource/baloo-2/600.css';
+@import '@fontsource/baloo-2/700.css';
+@import '@fontsource/opendyslexic/400.css';
+@import '@fontsource/opendyslexic/700.css';
+
+/*
  * Theme tokens. The platform module (src/ui) owns this file.
  * Accessibility classes are set on <html> by applyAccessibility().
+ *
+ * `static` keeps every token available as a CSS variable, also the ones that
+ * are only read from canvas code or inline styles.
+ *
+ * Text colour rules (WCAG AA, checked in src/ui/contrast.test.ts):
+ * - on white / paper / the 50-100 tints: ink-900, ink-700, ink-500, brand-700,
+ *   and the 700 shade of sun, leaf, coral and sky
+ * - on brand-500..800, coral-700, leaf-700, sky-700: white
+ * - on the bright 300-500 shades of sun, leaf, coral and sky: ink-900
  */
-@theme {
+@theme static {
   --color-brand-50: #f1efff;
   --color-brand-100: #e2deff;
+  --color-brand-200: #cdc6fb;
   --color-brand-300: #a99cf5;
+  --color-brand-400: #8272ea;
   --color-brand-500: #5b4bdb;
   --color-brand-600: #4a3bc4;
   --color-brand-700: #3b2ea0;
+  --color-brand-800: #2c2279;
+  --color-sun-100: #fff6d6;
   --color-sun-300: #ffe38a;
   --color-sun-400: #ffd54a;
   --color-sun-500: #f5b800;
+  --color-sun-600: #c99400;
+  --color-sun-700: #7a5600;
+  --color-leaf-100: #dcf5e8;
   --color-leaf-400: #4cc38a;
   --color-leaf-600: #1f8f5c;
+  --color-leaf-700: #156c44;
+  --color-coral-100: #ffe5e1;
   --color-coral-400: #ff8a7a;
   --color-coral-600: #d9483a;
+  --color-coral-700: #b3352a;
+  --color-coral-800: #8f271f;
+  --color-sky-100: #dff1ff;
+  --color-sky-400: #5bb8f5;
+  --color-sky-600: #1c7fc4;
+  --color-sky-700: #0f5c94;
   --color-ink-900: #1f1a3d;
   --color-ink-700: #3d3766;
   --color-ink-500: #6b668f;
+  --color-ink-400: #8d88ad;
+  --color-ink-200: #d9d6e8;
+  --color-ink-100: #ecebf5;
+  --color-ink-50: #f6f5fb;
   --color-paper: #fbfaff;
-  --font-display: 'Baloo 2', 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
-  --font-body: 'Nunito', ui-rounded, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --font-display:
+    'Baloo 2', 'Nunito Variable', 'Nunito', ui-rounded, 'SF Pro Rounded', 'Noto Sans Devanagari', system-ui, sans-serif;
+  --font-body:
+    'Nunito Variable', 'Nunito', ui-rounded, 'Noto Sans Devanagari', 'Kohinoor Devanagari', 'Nirmala UI', system-ui,
+    -apple-system, 'Segoe UI', sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(31 26 61 / 0.06), 0 6px 20px rgb(31 26 61 / 0.07);
+  --shadow-lift: 0 2px 4px rgb(31 26 61 / 0.08), 0 14px 32px rgb(31 26 61 / 0.14);
+
+  /* Animations used by the component kit: animate-wiggle, animate-pop, ... */
+  --animate-wiggle: wiggle 0.6s ease-in-out;
+  --animate-pop: pop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  --animate-float: float 5s ease-in-out infinite;
+  --animate-shake: shake 0.4s ease-in-out;
+  --animate-fade-in: fade-in 0.2s ease-out both;
+  --animate-rise: rise 0.28s ease-out both;
+  --animate-twinkle: twinkle 2.4s ease-in-out infinite;
+
+  @keyframes wiggle {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    20% {
+      transform: rotate(-7deg);
+    }
+    40% {
+      transform: rotate(6deg);
+    }
+    60% {
+      transform: rotate(-4deg);
+    }
+    80% {
+      transform: rotate(3deg);
+    }
+  }
+  @keyframes pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.86);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(6px);
+    }
+    60% {
+      transform: translateX(-4px);
+    }
+    80% {
+      transform: translateX(4px);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0.35;
+      transform: scale(0.9);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.1);
+    }
+  }
 }
 
-html,
-body,
-#root {
-  height: 100%;
+/* Tokens that are not Tailwind theme values. */
+:root {
+  --focus-ring: var(--color-brand-600);
+  --focus-ring-width: 3px;
+  /* Child area backgrounds. High contrast mode replaces them with a flat colour. */
+  --child-bg-day: linear-gradient(160deg, #f1efff 0%, #e6f4ff 50%, #fff6d6 100%);
+  --child-bg-meadow: linear-gradient(160deg, #e9fbf1 0%, #e6f4ff 55%, #f1efff 100%);
+  --child-bg-sunset: linear-gradient(160deg, #fff6d6 0%, #ffe5e1 55%, #f1efff 100%);
+  --child-bg-space: linear-gradient(160deg, #1f1a3d 0%, #2c2279 60%, #3b2ea0 100%);
 }
 
-body {
-  margin: 0;
-  font-family: var(--font-body);
-  color: var(--color-ink-900);
-  background: var(--color-paper);
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior: none;
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    line-height: 1.5;
+    color: var(--color-ink-900);
+    background: var(--color-paper);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='switch']:not(:disabled),
+  [role='tab'],
+  summary,
+  label[for],
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button,
+  [role='button'],
+  a {
+    touch-action: manipulation;
+  }
+
+  ::placeholder {
+    color: var(--color-ink-500);
+    opacity: 1;
+  }
+
+  ::selection {
+    background: var(--color-brand-200);
+    color: var(--color-ink-900);
+  }
+
+  /* A strong, consistent keyboard focus ring. Utilities may replace it per component. */
+  :focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Screen-reader-only text for places where Tailwind's `sr-only` class cannot be used (e.g. injected nodes). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Safe-area aware padding for full-screen child layouts on notched devices. */
+@utility pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+@utility pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+@utility px-safe {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+/* Child area backgrounds (ChildShell). */
+.child-bg {
+  background: var(--child-bg-day);
+}
+.child-bg-meadow {
+  background: var(--child-bg-meadow);
+}
+.child-bg-sunset {
+  background: var(--child-bg-sunset);
+}
+.child-bg-space {
+  background: var(--child-bg-space);
+  color: #ffffff;
+  --focus-ring: var(--color-sun-400);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Accessibility classes on <html>, set by applyAccessibility()              */
+/* ------------------------------------------------------------------------ */
+
+/* Dyslexia-friendly reading: OpenDyslexic, wider spacing, taller lines. */
+html.a11y-dyslexia {
+  --font-display: 'OpenDyslexic', 'Nunito Variable', 'Nunito', 'Noto Sans Devanagari', system-ui, sans-serif;
+  --font-body: 'OpenDyslexic', 'Nunito Variable', 'Nunito', 'Noto Sans Devanagari', system-ui, sans-serif;
+  --text-xs--line-height: 1.75;
+  --text-sm--line-height: 1.75;
+  --text-base--line-height: 1.75;
+  --text-lg--line-height: 1.7;
+  --text-xl--line-height: 1.65;
+  --text-2xl--line-height: 1.5;
+  --text-3xl--line-height: 1.45;
+  --text-4xl--line-height: 1.4;
+  --text-5xl--line-height: 1.3;
+  letter-spacing: 0.035em;
+  word-spacing: 0.14em;
+}
+html.a11y-dyslexia body {
+  line-height: 1.75;
+}
+
+/* Larger text: everything is sized in rem, so the whole interface scales. */
+html.a11y-large {
+  font-size: 118%;
+}
+
+/* High contrast: darker text, strong borders and focus rings, no decorative gradients. */
+html.a11y-contrast {
+  --color-ink-900: #0d0a24;
+  --color-ink-700: #1f1a3d;
+  --color-ink-500: #2f2a52;
+  --color-ink-400: #1f1a3d;
+  --color-ink-200: #3d3766;
+  --color-brand-300: #3b2ea0;
+  --color-brand-500: #3b2ea0;
+  --color-brand-600: #2c2279;
+  --color-paper: #ffffff;
+  --focus-ring: #000000;
+  --focus-ring-width: 4px;
+  --child-bg-day: #ffffff;
+  --child-bg-meadow: #ffffff;
+  --child-bg-sunset: #ffffff;
+  --child-bg-space: #0d0a24;
+  --shadow-card: 0 0 0 2px #1f1a3d;
+  --shadow-lift: 0 0 0 3px #1f1a3d;
+}
+html.a11y-contrast :focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring) !important;
+  outline-offset: 2px !important;
+}
+html.a11y-contrast .child-bg-space :focus-visible {
+  outline-color: #ffffff !important;
+}
+html.a11y-contrast .decor {
+  display: none !important;
+}
+html.a11y-contrast a:not([class]) {
+  text-decoration: underline;
+}
+
+/* Calm mode: no CSS animation or transition. The OS setting gets the same treatment. */
+html.a11y-calm *,
+html.a11y-calm *::before,
+html.a11y-calm *::after {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }

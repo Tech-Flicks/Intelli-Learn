@@ -10,13 +10,14 @@
  */
 import { z } from 'zod';
 import { ChallengeSchema } from '@/core/schemas';
-import { AGE_GROUPS, GRADES, INTERACTION_KINDS, MODES, STRANDS } from '@/core/types';
+import { AGE_GROUPS, GRADES, INTERACTION_KINDS, LOCALES, MODES, STRANDS } from '@/core/types';
 import type {
   AttemptRecord,
   ChallengeRecord,
   ChildProfile,
   HelperMessage,
   LearnerNotes,
+  LibraryItem,
   ParentalControls,
   RewardRecord,
   SessionRecord,
@@ -37,6 +38,10 @@ const text = z.string();
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a day like 2026-01-31');
 const strand = z.enum(STRANDS);
 const stage = z.number().int().min(0).max(GRADES.length * 4 - 1);
+const interaction = z.enum(INTERACTION_KINDS);
+const mode = z.enum(MODES);
+/** Parent rating in stars. */
+const rating = z.number().min(1).max(5);
 
 const controlsObject = z.object({
   dailyMinutes: z.number().min(0).max(24 * 60),
@@ -74,7 +79,7 @@ const ChildProfileSchema: z.ZodType<ChildProfile> = z.object({
   placementDone: z.boolean(),
   companion: z.object({
     species: z.string().min(1).max(40),
-    name: z.string().max(40),
+    name: z.string().max(100),
     growth: z.number().min(0).max(4),
     xp: count,
   }),
@@ -97,6 +102,9 @@ const SkillStateSchema: z.ZodType<SkillState> = z.object({
   assistedStreak: count,
   independentStreak: count,
   attempts: count,
+  checkPending: z.boolean(),
+  checksPassed: count,
+  recentInteractions: z.array(interaction).max(16),
   lastPracticedAt: time.nullable(),
   reviewDueAt: time.nullable(),
   reviewIntervalDays: count,
@@ -119,9 +127,9 @@ const ChallengeRecordSchema: z.ZodType<ChallengeRecord> = z.object({
   skillId: id,
   strand,
   stage,
-  interaction: z.enum(INTERACTION_KINDS),
-  mode: z.enum(MODES),
-  purpose: z.enum(['placement', 'core', 'review', 'stretch', 'sibling']),
+  interaction,
+  mode,
+  purpose: z.enum(['placement', 'core', 'review', 'stretch', 'sibling', 'check']),
   theme: text,
   // The same schema every AI-written challenge has to pass before it is stored.
   content: ChallengeSchema,
@@ -129,7 +137,8 @@ const ChallengeRecordSchema: z.ZodType<ChallengeRecord> = z.object({
   status: z.enum(['queued', 'active', 'completed', 'discarded']),
   storyId: id.nullable(),
   chapterIndex: z.number().int().min(0).nullable(),
-  parentRating: z.enum(['up', 'down']).nullable(),
+  libraryId: id.nullable(),
+  parentRating: rating.nullable(),
   parentNote: text,
   createdAt: time,
   startedAt: time.nullable(),
@@ -234,6 +243,32 @@ const WeeklyReportSchema: z.ZodType<WeeklyReport> = z.object({
     stageUps: count,
   }),
   createdAt: time,
+});
+
+export const LIBRARY_ROW_SCHEMA: z.ZodType<LibraryItem> = z.object({
+  id,
+  fingerprint: z.string().min(1).max(200),
+  skillId: id,
+  strand,
+  stage,
+  grade: z.enum(GRADES),
+  interaction,
+  mode,
+  theme: text,
+  ageGroup: z.enum(AGE_GROUPS),
+  locale: z.enum(LOCALES),
+  content: ChallengeSchema,
+  origin: z.enum(['ai', 'remix']),
+  remixOf: id.nullable(),
+  rating: rating.nullable(),
+  ratingNote: text,
+  retired: z.boolean(),
+  seenBy: z.array(id),
+  uses: count,
+  independentSolves: count,
+  assistedSolves: count,
+  createdAt: time,
+  lastUsedAt: time.nullable(),
 });
 
 export const CHILDREN_ROW_SCHEMA = ChildProfileSchema;

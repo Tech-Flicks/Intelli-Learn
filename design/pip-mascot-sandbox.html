@@ -1,0 +1,2288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pip — Cute Interactive AI Bot Mascot &amp; Agent Sandbox</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            display: ['Fredoka', 'cursive', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* ==========================================================================
+       1. STANDALONE PIP BOT SVG STYLES & 20-STATE CHOREOGRAPHY
+       ========================================================================== */
+    #pip-bot-svg {
+      --mouth-open: 0;
+      --gaze-x: 0px;
+      --gaze-y: 0px;
+      overflow: visible !important;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: none;
+    }
+
+    /* Core Articulated Groups anchored to exact viewBox="0 0 380 380" coordinates */
+    #bot-whole {
+      transform-box: view-box;
+      transform-origin: 190px 230px;
+      transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #body-group {
+      transform-box: view-box;
+      transform-origin: 190px 264px;
+      transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #head-group {
+      transform-box: view-box;
+      transform-origin: 190px 206px;
+      transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #antenna-group {
+      transform-box: view-box;
+      transform-origin: 190px 72px;
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+    }
+
+    #bot-shadow {
+      transform-box: view-box;
+      transform-origin: 190px 346px;
+      transition: transform 0.38s ease, opacity 0.38s ease;
+    }
+
+    /* PROCEDURAL KINEMATIC ARMS & HANDS LAYER (Layer 5 — Always Topmost) */
+    #arms-kinematic-layer {
+      opacity: 1 !important;
+      visibility: visible !important;
+    }
+
+    .ik-hand-grab {
+      cursor: grab;
+    }
+    .ik-hand-grab:active {
+      cursor: grabbing;
+    }
+
+    /* Chest Golden Heart-Gear Continuous Rotation */
+    #chest-gear {
+      transform-box: view-box;
+      transform-origin: 190px 257px;
+      animation: pipGearSpin 9s linear infinite;
+    }
+    #pip-bot-svg[data-state="thinking"] #chest-gear,
+    #pip-bot-svg[data-state="talking"] #chest-gear,
+    #pip-bot-svg[data-state="celebrating"] #chest-gear,
+    #pip-bot-svg[data-state="proud"] #chest-gear {
+      animation-duration: 2s;
+    }
+    #pip-bot-svg[data-state="sleeping"] #chest-gear,
+    #pip-bot-svg[data-state="tired"] #chest-gear {
+      animation-duration: 22s;
+    }
+
+    /* Cursor / Touch Gaze Tracking */
+    #pupil-left,
+    #pupil-right {
+      transform: translate(var(--gaze-x), var(--gaze-y));
+      transition: transform 0.14s ease-out;
+    }
+
+    .eye-open-scale {
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: transform 0.12s ease;
+    }
+
+    /* Natural Blinking */
+    #pip-bot-svg.is-blinking .eye-open-scale {
+      transform: scaleY(0.08);
+    }
+
+    /* Angry Visor Red-Coral Tint */
+    #angry-screen-tint {
+      opacity: 0;
+      transition: opacity 0.28s ease;
+    }
+    #pip-bot-svg[data-state="angry"] #angry-screen-tint {
+      opacity: 1;
+    }
+
+    /* Eye Expression Layers */
+    .eye-layer {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #pip-bot-svg[data-state="idle"] .eye-open,
+    #pip-bot-svg[data-state="listening"] .eye-open,
+    #pip-bot-svg[data-state="thinking"] .eye-open,
+    #pip-bot-svg[data-state="talking"] .eye-open,
+    #pip-bot-svg[data-state="happy"] .eye-open,
+    #pip-bot-svg[data-state="teaching"] .eye-open,
+    #pip-bot-svg[data-state="reading"] .eye-open,
+    #pip-bot-svg[data-state="storytelling"] .eye-open,
+    #pip-bot-svg[data-state="curious"] .eye-open,
+    #pip-bot-svg[data-state="shy"] .eye-open {
+      opacity: 1;
+    }
+
+    #pip-bot-svg[data-state="giggle"] .eye-happy-arcs,
+    #pip-bot-svg[data-state="singing"] .eye-happy-arcs,
+    #pip-bot-svg[data-state="celebrating"] .eye-happy-arcs,
+    #pip-bot-svg[data-state="proud"] .eye-happy-arcs {
+      opacity: 1;
+    }
+
+    #pip-bot-svg[data-state="sad"] .eye-sad { opacity: 1; }
+    #pip-bot-svg[data-state="angry"] .eye-angry { opacity: 1; }
+    #pip-bot-svg[data-state="tired"] .eye-tired { opacity: 1; }
+    #pip-bot-svg[data-state="sleeping"] .eye-sleep,
+    #pip-bot-svg[data-state="waiting"] .eye-sleep { opacity: 1; }
+    #pip-bot-svg[data-state="jump_scared"] .eye-scared { opacity: 1; }
+
+    /* Curious Asymmetric Eye Scale */
+    #pip-bot-svg[data-state="curious"] #eye-left-wrap { transform: scale(1.18); }
+    #pip-bot-svg[data-state="curious"] #eye-right-wrap { transform: scale(0.9); }
+
+    /* Eyebrows */
+    #brow-left,
+    #brow-right {
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+    }
+    #pip-bot-svg[data-state="sad"] #brow-left,
+    #pip-bot-svg[data-state="shy"] #brow-left { transform: translateY(3px) rotate(-16deg); }
+    #pip-bot-svg[data-state="sad"] #brow-right,
+    #pip-bot-svg[data-state="shy"] #brow-right { transform: translateY(3px) rotate(16deg); }
+    #pip-bot-svg[data-state="angry"] #brow-left,
+    #pip-bot-svg[data-state="angry"] #brow-right { opacity: 0; }
+    #pip-bot-svg[data-state="curious"] #brow-left { transform: translateY(-5px) rotate(-10deg); }
+    #pip-bot-svg[data-state="curious"] #brow-right { transform: translateY(2px) rotate(8deg); }
+    #pip-bot-svg[data-state="thinking"] #brow-left { transform: translateY(-4px) rotate(-8deg); }
+    #pip-bot-svg[data-state="thinking"] #brow-right { transform: translateY(-5px) rotate(10deg); }
+    #pip-bot-svg[data-state="jump_scared"] #brow-left { transform: translateY(-6px) rotate(-14deg); }
+    #pip-bot-svg[data-state="jump_scared"] #brow-right { transform: translateY(-6px) rotate(14deg); }
+    #pip-bot-svg[data-state="listening"] #brow-left,
+    #pip-bot-svg[data-state="listening"] #brow-right { transform: translateY(-3px); }
+
+    /* Cheeks */
+    #cheeks-group {
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: opacity 0.28s ease, transform 0.28s ease;
+    }
+    #pip-bot-svg[data-state="angry"] #cheeks-group,
+    #pip-bot-svg[data-state="jump_scared"] #cheeks-group { opacity: 0.25; }
+    #pip-bot-svg[data-state="shy"] #cheeks-group { opacity: 1; transform: scale(1.22); }
+
+    /* Mouth Layers */
+    .mouth-layer {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.16s ease;
+    }
+
+    #pip-bot-svg[data-state="idle"] .mouth-smile,
+    #pip-bot-svg[data-state="listening"] .mouth-smile,
+    #pip-bot-svg[data-state="happy"] .mouth-smile,
+    #pip-bot-svg[data-state="teaching"] .mouth-smile,
+    #pip-bot-svg[data-state="reading"] .mouth-smile,
+    #pip-bot-svg[data-state="storytelling"] .mouth-smile,
+    #pip-bot-svg[data-state="sleeping"] .mouth-smile,
+    #pip-bot-svg[data-state="shy"] .mouth-smile {
+      opacity: 1;
+    }
+
+    #pip-bot-svg[data-state="proud"] .mouth-proud { opacity: 1; }
+    #pip-bot-svg[data-state="giggle"] .mouth-giggle,
+    #pip-bot-svg[data-state="celebrating"] .mouth-giggle { opacity: 1; }
+    #pip-bot-svg[data-state="sad"] .mouth-sad,
+    #pip-bot-svg[data-state="angry"] .mouth-sad { opacity: 1; }
+    #pip-bot-svg[data-state="waiting"] .mouth-flat { opacity: 1; }
+    #pip-bot-svg[data-state="curious"] .mouth-curious,
+    #pip-bot-svg[data-state="thinking"] .mouth-curious { opacity: 1; }
+    #pip-bot-svg[data-state="tired"] .mouth-yawn { opacity: 1; }
+    #pip-bot-svg[data-state="jump_scared"] .mouth-scared { opacity: 1; }
+
+    /* Real-Time Lip-Sync Mouth (Talking & Singing) */
+    #pip-bot-svg[data-state="talking"] .mouth-dynamic,
+    #pip-bot-svg[data-state="singing"] .mouth-dynamic {
+      opacity: 1;
+    }
+
+    #dynamic-mouth-shape {
+      transform-box: view-box;
+      transform-origin: 190px 164px;
+      transform: scaleY(calc(0.24 + var(--mouth-open) * 1.15)) scaleX(calc(0.86 + var(--mouth-open) * 0.24));
+      transition: transform 0.045s linear;
+    }
+
+    /* ==========================================================================
+       2. CONTEXTUAL PROPS & PARTICLE OVERLAYS
+       ========================================================================== */
+    .bot-prop {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #pip-bot-svg[data-state="teaching"] #prop-chalkboard,
+    #pip-bot-svg[data-state="teaching"] #prop-glasses,
+    #pip-bot-svg[data-state="teaching"] #prop-pointer { opacity: 1; }
+    #pip-bot-svg[data-state="reading"] #prop-book { opacity: 1; }
+    #pip-bot-svg[data-state="storytelling"] #prop-wizard-hat,
+    #pip-bot-svg[data-state="storytelling"] #prop-magic-aura { opacity: 1; }
+    #pip-bot-svg[data-state="storytelling"] #antenna-group { opacity: 0; }
+    #pip-bot-svg[data-state="sleeping"] #prop-pillow { opacity: 1; }
+    #pip-bot-svg[data-state="tired"] #prop-tired-fx { opacity: 1; }
+    #pip-bot-svg[data-state="waiting"] #prop-waiting-fx,
+    #pip-bot-svg[data-state="waiting"] #prop-waiting-desk { opacity: 1; }
+    #pip-bot-svg[data-state="sad"] #prop-raincloud { opacity: 1; }
+    #pip-bot-svg[data-state="angry"] #prop-steam { opacity: 1; }
+    #pip-bot-svg[data-state="jump_scared"] #prop-scared-fx { opacity: 1; }
+    #pip-bot-svg[data-state="singing"] #prop-music-notes,
+    #pip-bot-svg[data-state="singing"] #prop-microphone { opacity: 1; }
+    #pip-bot-svg[data-state="giggle"] #prop-giggle-fx { opacity: 1; }
+    #pip-bot-svg[data-state="listening"] #prop-listen-waves { opacity: 1; }
+    #pip-bot-svg[data-state="talking"] #prop-talk-waves { opacity: 1; }
+    #pip-bot-svg[data-state="celebrating"] #prop-celebrate-fx { opacity: 1; }
+    #pip-bot-svg[data-state="happy"] #prop-hearts-stars,
+    #pip-bot-svg[data-state="proud"] #prop-hearts-stars,
+    #pip-bot-svg[data-state="shy"] #prop-hearts-stars { opacity: 1; }
+    #pip-bot-svg[data-state="thinking"] #prop-think-bubbles { opacity: 1; }
+    #pip-bot-svg[data-state="curious"] #prop-curious-q,
+    #pip-bot-svg[data-state="curious"] #prop-magnifying-glass { opacity: 1; }
+
+    /* ==========================================================================
+       3. HEAD & BODY CHOREOGRAPHY ACROSS ALL 20 STATES
+       (Arms & Hands are driven at 60fps by the Procedural Kinematics Engine)
+       ========================================================================== */
+    #pip-bot-svg[data-state="idle"] #bot-whole { animation: pipIdleFloat 3.4s ease-in-out infinite; }
+    #pip-bot-svg[data-state="idle"] #bot-shadow { animation: pipShadowPulse 3.4s ease-in-out infinite; }
+
+    #pip-bot-svg[data-state="listening"] #head-group { transform: rotate(-4deg) translateY(2px); animation: pipListenNod 2s ease-in-out infinite; }
+    #pip-bot-svg[data-state="thinking"] #head-group { transform: rotate(6deg) translateY(-2px); animation: pipThinkTilt 2.8s ease-in-out infinite; }
+    #pip-bot-svg[data-state="talking"] #head-group { animation: pipTalkBob 0.55s ease-in-out infinite; }
+    #pip-bot-svg[data-state="singing"] #bot-whole { animation: pipSingSway 1.2s ease-in-out infinite; }
+    #pip-bot-svg[data-state="happy"] #bot-whole { animation: pipHappyBounce 1.35s ease-in-out infinite; }
+    #pip-bot-svg[data-state="giggle"] #head-group { animation: pipGiggleHead 0.28s ease-in-out infinite; }
+    #pip-bot-svg[data-state="sad"] #head-group { transform: translateY(7px) rotate(-3deg); animation: pipSadSigh 3.2s ease-in-out infinite; }
+    #pip-bot-svg[data-state="angry"] #bot-whole { animation: pipAngryShake 0.16s linear infinite; }
+    #pip-bot-svg[data-state="tired"] #head-group { transform: translateY(6px) rotate(4deg); animation: pipTiredSway 3.4s ease-in-out infinite; }
+    #pip-bot-svg[data-state="sleeping"] #head-group { transform: translate(-8px, 9px) rotate(-10deg); animation: pipSleepHead 3.6s ease-in-out infinite; }
+    #pip-bot-svg[data-state="sleeping"] #body-group { animation: pipSleepBody 3.6s ease-in-out infinite; }
+    #pip-bot-svg[data-state="waiting"] #head-group { transform: translate(-5px, 6px) rotate(-7deg); }
+    #pip-bot-svg[data-state="jump_scared"] #bot-whole { animation: pipJumpScare 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards, pipScareTremble 0.13s linear 0.42s infinite; }
+    #pip-bot-svg[data-state="jump_scared"] #bot-shadow { transform: scale(0.75); opacity: 0.45; }
+    #pip-bot-svg[data-state="curious"] #head-group { transform: rotate(9deg) translateY(-2px); }
+    #pip-bot-svg[data-state="proud"] #body-group { transform: scale(1.03) translateY(-2px); }
+    #pip-bot-svg[data-state="proud"] #head-group { transform: translateY(-4px) rotate(-2deg); }
+    #pip-bot-svg[data-state="shy"] #head-group { transform: translateY(5px) rotate(-5deg); animation: pipShySway 2.4s ease-in-out infinite; }
+    #pip-bot-svg[data-state="teaching"] #bot-whole { transform: translateX(-28px); }
+    #pip-bot-svg[data-state="reading"] #head-group { transform: translateY(5px); animation: pipReadScan 2.8s ease-in-out infinite; }
+    #pip-bot-svg[data-state="storytelling"] #bot-whole { animation: pipIdleFloat 2.6s ease-in-out infinite; }
+    #pip-bot-svg[data-state="celebrating"] #bot-whole { animation: pipCelebrateJump 0.72s ease-in-out infinite; }
+    #pip-bot-svg[data-state="celebrating"] #bot-shadow { animation: pipCelebrateShadow 0.72s ease-in-out infinite; }
+
+    /* Squash & Stretch Tap Physics */
+    #pip-bot-svg.squash-pop #bot-whole {
+      animation: pipSquashPop 0.46s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+    }
+
+    /* Ambient Prop Motion Helpers */
+    .anim-float-slow { animation: pipPropFloat 2.6s ease-in-out infinite; }
+    .anim-float-fast { animation: pipPropFloat 1.5s ease-in-out infinite; }
+    .anim-pulse-wave { animation: pipWavePulse 1.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+    .anim-zzz-1 { animation: pipZzzRise 2.7s ease-in-out infinite; }
+    .anim-zzz-2 { animation: pipZzzRise 2.7s ease-in-out 0.9s infinite; }
+    .anim-zzz-3 { animation: pipZzzRise 2.7s ease-in-out 1.8s infinite; }
+    .anim-tear { animation: pipTearDrop 1.7s ease-in infinite; }
+    .anim-steam-l { animation: pipSteamL 1.1s ease-out infinite; }
+    .anim-steam-r { animation: pipSteamR 1.1s ease-out 0.3s infinite; }
+    .anim-confetti { animation: pipConfettiPop 1.25s ease-out infinite; }
+
+    @keyframes pipGearSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes pipIdleFloat { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-6px); } }
+    @keyframes pipShadowPulse { 0%, 100% { transform: scaleX(1); opacity: 0.16; } 50% { transform: scaleX(0.9); opacity: 0.11; } }
+    @keyframes pipListenNod { 0%, 100% { transform: rotate(-4deg) translateY(2px); } 50% { transform: rotate(-6deg) translateY(5px); } }
+    @keyframes pipThinkTilt { 0%, 100% { transform: rotate(6deg) translateY(-2px); } 50% { transform: rotate(9deg) translateY(-4px); } }
+    @keyframes pipTalkBob { 0%, 100% { transform: translateY(0px) rotate(0deg); } 35% { transform: translateY(-3px) rotate(-2deg); } 70% { transform: translateY(1px) rotate(2deg); } }
+    @keyframes pipSingSway { 0%, 100% { transform: rotate(-4deg) translateY(0px); } 50% { transform: rotate(4deg) translateY(-5px); } }
+    @keyframes pipHappyBounce { 0%, 100% { transform: translateY(0px); } 45% { transform: translateY(-8px); } }
+    @keyframes pipGiggleHead { 0%, 100% { transform: translateY(0px) rotate(-2deg); } 50% { transform: translateY(-3px) rotate(2deg); } }
+    @keyframes pipSadSigh { 0%, 100% { transform: translateY(7px) rotate(-3deg); } 50% { transform: translateY(11px) rotate(-4deg); } }
+    @keyframes pipAngryShake { 0% { transform: translate(-2px, 0); } 25% { transform: translate(2px, -1px); } 50% { transform: translate(-2px, 1px); } 75% { transform: translate(2px, 0); } 100% { transform: translate(-2px, 0); } }
+    @keyframes pipTiredSway { 0%, 100% { transform: translateY(6px) rotate(3deg); } 50% { transform: translateY(10px) rotate(6deg); } }
+    @keyframes pipSleepHead { 0%, 100% { transform: translate(-8px, 9px) rotate(-10deg); } 50% { transform: translate(-8px, 6px) rotate(-8deg); } }
+    @keyframes pipSleepBody { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.03); } }
+    @keyframes pipJumpScare { 0% { transform: translateY(0) scale(0.92, 1.08); } 45% { transform: translateY(-20px) scale(1.04, 0.96); } 100% { transform: translateY(-8px) scale(1, 1); } }
+    @keyframes pipScareTremble { 0%, 100% { transform: translate(-1.5px, -8px); } 50% { transform: translate(1.5px, -8px); } }
+    @keyframes pipShySway { 0%, 100% { transform: translateY(5px) rotate(-5deg); } 50% { transform: translateY(6px) rotate(-2deg); } }
+    @keyframes pipReadScan { 0%, 100% { transform: translateY(5px) rotate(-2deg); } 50% { transform: translateY(5px) rotate(2deg); } }
+    @keyframes pipCelebrateJump { 0%, 100% { transform: translateY(0px) scale(1.03, 0.96); } 45% { transform: translateY(-16px) scale(0.97, 1.04); } }
+    @keyframes pipCelebrateShadow { 0%, 100% { transform: scaleX(1.05); opacity: 0.18; } 45% { transform: scaleX(0.68); opacity: 0.08; } }
+    @keyframes pipSquashPop { 0% { transform: scale(1, 1); } 30% { transform: scale(1.14, 0.86) translateY(8px); } 65% { transform: scale(0.93, 1.08) translateY(-10px); } 100% { transform: scale(1, 1) translateY(0px); } }
+    @keyframes pipPropFloat { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-6px); } }
+    @keyframes pipWavePulse { 0% { transform: scale(0.85); opacity: 0.9; } 100% { transform: scale(1.42); opacity: 0; } }
+    @keyframes pipZzzRise { 0% { transform: translate(0, 8px) scale(0.7); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(11px, -20px) scale(1.15); opacity: 0; } }
+    @keyframes pipTearDrop { 0% { transform: translateY(0px) scale(0.8); opacity: 0.95; } 80% { transform: translateY(20px) scale(1); opacity: 0.9; } 100% { transform: translateY(26px) scale(0.6); opacity: 0; } }
+    @keyframes pipSteamL { 0% { transform: translate(0, 0) scale(0.7); opacity: 0.95; } 100% { transform: translate(-16px, -14px) scale(1.25); opacity: 0; } }
+    @keyframes pipSteamR { 0% { transform: translate(0, 0) scale(0.7); opacity: 0.95; } 100% { transform: translate(16px, -14px) scale(1.25); opacity: 0; } }
+    @keyframes pipConfettiPop { 0% { transform: translateY(5px) scale(0.75); opacity: 0.25; } 50% { transform: translateY(-9px) scale(1.06); opacity: 1; } 100% { transform: translateY(3px) scale(0.9); opacity: 0.45; } }
+
+    /* Custom subtle scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-[#F6F5FF] via-[#F1FAFF] to-[#FFF9EE] text-slate-800 antialiased selection:bg-cyan-200 selection:text-slate-900">
+
+  <!-- Toast Notification Banner -->
+  <div id="toast-banner" class="fixed bottom-5 right-5 z-50 pointer-events-none opacity-0 translate-y-3 transition-all duration-300">
+    <div class="bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-xl border border-slate-700/80 flex items-center gap-2.5 text-sm font-medium">
+      <span id="toast-icon" class="text-base">✨</span>
+      <span id="toast-text">Copied to clipboard!</span>
+    </div>
+  </div>
+
+  <!-- Top Navigation Header -->
+  <header class="sticky top-0 z-30 backdrop-blur-md bg-white/85 border-b border-indigo-100/80">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-teal-300 via-cyan-400 to-indigo-400 p-0.5 shadow-sm flex items-center justify-center">
+          <div class="w-full h-full bg-[#1b243b] rounded-[14px] flex items-center justify-center text-lg">
+            ⭐
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-display font-bold text-xl sm:text-2xl text-slate-900 tracking-tight">Pip AI Mascot</h1>
+            <span class="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-teal-100 text-teal-800 border border-teal-200">
+              20 States • 60fps IK Arms
+            </span>
+          </div>
+          <p class="text-xs text-slate-500 hidden sm:block">Kids' Learning Companion • Grab-and-Drag Articulated Hands • AI Agent Lip-Sync Ready</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 sm:gap-2.5">
+        <!-- Web Audio Cute Synth Toggle -->
+        <button id="btn-sound-toggle" type="button"
+          class="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-sm active:scale-95"
+          title="Toggle gentle Web Audio synth chirps">
+          <span id="sound-icon">🔇</span>
+          <span class="hidden md:inline">Synth SFX:</span>
+          <span id="sound-label">Off</span>
+        </button>
+
+        <!-- Auto-Life Toggle -->
+        <button id="btn-autoidle-toggle" type="button"
+          class="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all flex items-center gap-1.5 bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm active:scale-95"
+          title="Auto blink, cursor gaze tracking, and sleepy idle progression">
+          <span>✨</span>
+          <span class="hidden md:inline">Auto-Life:</span>
+          <span id="autoidle-label">On</span>
+        </button>
+
+        <!-- Export Code Modal Trigger -->
+        <button id="btn-open-export" type="button"
+          class="min-h-[40px] px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-slate-900 hover:bg-slate-800 text-white shadow-sm transition-all flex items-center gap-2 active:scale-95">
+          <svg class="w-4 h-4 text-cyan-300" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+          <span>Get SVG &amp; Agent Code</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace Grid -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+    <!-- LEFT COLUMN: Interactive Mascot Stage + AI Agent Pipeline Simulator -->
+    <section class="lg:col-span-5 flex flex-col gap-5">
+
+      <!-- Mascot Interactive Stage Card -->
+      <div class="bg-white rounded-3xl border border-indigo-100/90 shadow-sm overflow-hidden">
+        <!-- Stage Top Bar: Current State Pill + Responsive Scale Preview -->
+        <div class="px-4 py-3 bg-slate-50/80 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2.5 w-2.5">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-teal-500"></span>
+            </span>
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">State:</span>
+            <span id="active-state-badge" class="px-2.5 py-0.5 rounded-lg text-xs font-bold bg-indigo-100 text-indigo-800 capitalize">
+              happy
+            </span>
+          </div>
+
+          <!-- Responsive Scale Preview Buttons -->
+          <div class="flex items-center bg-white rounded-xl p-0.5 border border-slate-200 text-xs font-medium" role="group" aria-label="SVG Scale Preview">
+            <button type="button" data-size="64" class="size-btn px-2 py-1 rounded-lg text-slate-500 hover:text-slate-900 transition">64px</button>
+            <button type="button" data-size="140" class="size-btn px-2 py-1 rounded-lg text-slate-500 hover:text-slate-900 transition">140px</button>
+            <button type="button" data-size="280" class="size-btn px-2.5 py-1 rounded-lg bg-indigo-600 text-white shadow-xs transition">Hero</button>
+          </div>
+        </div>
+
+        <!-- Pastel Interactive Canvas Area -->
+        <div id="stage-backdrop" class="relative min-h-[360px] sm:min-h-[395px] flex flex-col items-center justify-center p-6 bg-gradient-to-br from-[#EFE9FF] via-[#E8F6FF] to-[#FFF4DF] transition-colors duration-500">
+          <div class="absolute top-5 left-6 w-16 h-16 rounded-full bg-purple-300/20 blur-xl pointer-events-none"></div>
+          <div class="absolute bottom-6 right-8 w-24 h-24 rounded-full bg-amber-300/25 blur-xl pointer-events-none"></div>
+
+          <!-- Live Speech Bubble -->
+          <div id="bot-speech-bubble"
+            class="mb-2 max-w-[295px] px-4 py-2 rounded-2xl bg-white/95 backdrop-blur-xs border-2 border-indigo-100 shadow-sm text-center text-xs sm:text-sm font-display font-semibold text-slate-700 transition-all duration-300 opacity-0 -translate-y-1 pointer-events-none">
+            Hi friend! Tap me or pick an action! ✨
+          </div>
+
+          <!-- Scalable SVG Container with overflow: visible -->
+          <div id="svg-stage-wrapper" style="width: 280px; height: 280px; overflow: visible;" class="relative flex items-center justify-center transition-all duration-300 cursor-pointer">
+
+            <!-- ==================================================================
+                 STANDALONE INLINE SVG MASCOT: "PIP"
+                 Strict 5-Layer Z-Order (Back-to-Front):
+                 Layer 1: Background Props (#bg-props-layer)
+                 Layer 2: Torso, Feet & Heart-Gear (#body-group)
+                 Layer 3: Head, Screen, Eyes, Mouth, Glasses & Hat (#head-group)
+                 Layer 4: Foreground Props (#fg-props-layer: #prop-book, #prop-waiting-desk)
+                 Layer 5: 60fps Procedural Articulated Arms & Hands (#arms-kinematic-layer)
+                 ================================================================== -->
+            <svg id="pip-bot-svg" data-state="happy" viewBox="0 0 380 380" style="overflow: visible;" class="w-full h-full drop-shadow-md" role="img" aria-label="Pip the cute AI learning robot mascot">
+              <defs>
+                <!-- Mint-Cyan Head & Limb Gradient -->
+                <linearGradient id="mintGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#9DF8E8" />
+                  <stop offset="52%" stop-color="#64F5E8" />
+                  <stop offset="100%" stop-color="#38BDF8" />
+                </linearGradient>
+
+                <!-- Segmented Arm Tube Cyan Gradient -->
+                <linearGradient id="armCyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#8CFBF0" />
+                  <stop offset="55%" stop-color="#5CE6DC" />
+                  <stop offset="100%" stop-color="#22B8CF" />
+                </linearGradient>
+
+                <!-- Warm Yellow-to-Cyan Chest Gradient -->
+                <linearGradient id="torsoGrad" x1="15%" y1="0%" x2="85%" y2="100%">
+                  <stop offset="0%" stop-color="#FFE66D" />
+                  <stop offset="44%" stop-color="#7EECE0" />
+                  <stop offset="100%" stop-color="#38BDF8" />
+                </linearGradient>
+
+                <!-- Golden Yellow Accent Gradient -->
+                <linearGradient id="goldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#FFE97D" />
+                  <stop offset="65%" stop-color="#FFD54F" />
+                  <stop offset="100%" stop-color="#FFB300" />
+                </linearGradient>
+
+                <!-- Angry Screen Coral-Red Tint -->
+                <linearGradient id="angryGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#991B1B" />
+                  <stop offset="100%" stop-color="#EF4444" />
+                </linearGradient>
+
+                <!-- Purple Storybook & Wizard Hat Gradient -->
+                <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#A78BFA" />
+                  <stop offset="100%" stop-color="#6D28D9" />
+                </linearGradient>
+
+                <!-- Soft Ambient Glow -->
+                <radialGradient id="ambientGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#6EE7D8" stop-opacity="0.28" />
+                  <stop offset="70%" stop-color="#A78BFA" stop-opacity="0.1" />
+                  <stop offset="100%" stop-color="#A78BFA" stop-opacity="0" />
+                </radialGradient>
+
+                <!-- Screen Clip Path -->
+                <clipPath id="screen-clip">
+                  <rect x="108" y="88" width="164" height="106" rx="28" />
+                </clipPath>
+              </defs>
+
+              <!-- Ambient Circle & Ground Contact Shadow -->
+              <circle cx="190" cy="190" r="158" fill="url(#ambientGlow)" />
+              <ellipse id="bot-shadow" cx="190" cy="346" rx="64" ry="11" fill="#1E2246" opacity="0.16" />
+
+              <!-- ==============================================================
+                   LAYER 1: BACKGROUND PROPS (Chalkboard, Pillow, Magic, Particles)
+                   ============================================================== -->
+              <g id="bg-props-layer">
+                <!-- Teaching Chalkboard ('★ abc') positioned clearly on right -->
+                <g id="prop-chalkboard" class="bot-prop">
+                  <rect x="242" y="132" width="122" height="86" rx="12" fill="#D97706" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+                  <rect x="250" y="140" width="106" height="70" rx="7" fill="#1E4D3B" stroke="#1E2246" stroke-width="3" />
+                  <!-- Chalk Tray & Chalk -->
+                  <rect x="266" y="212" width="74" height="7" rx="3.5" fill="#FBBF24" stroke="#1E2246" stroke-width="3" />
+                  <rect x="316" y="208" width="14" height="4" rx="2" fill="#FFFFFF" />
+                  <!-- Golden Star + 'abc' -->
+                  <polygon points="274,162 277.5,169.5 285.5,170.5 279.8,176 281.2,184 274,180.2 266.8,184 268.2,176 262.5,170.5 270.5,169.5"
+                           fill="#FFE66D" />
+                  <text x="292" y="182" font-family="Fredoka, sans-serif" font-weight="700" font-size="24" fill="#FFFFFF" letter-spacing="1">abc</text>
+                </g>
+
+                <!-- Sleeping Soft Cloud Pillow + Rising Zzz -->
+                <g id="prop-pillow" class="bot-prop">
+                  <path d="M98 206 C86 192, 104 170, 126 178 C152 168, 228 168, 254 178 C276 170, 294 192, 282 206 C292 224, 272 242, 250 234 C220 242, 160 242, 130 234 C108 242, 88 224, 98 206 Z"
+                        fill="#EDE9FE" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+                  <path d="M120 202 Q190 212 260 202" fill="none" stroke="#C4B5FD" stroke-width="3.5" stroke-linecap="round" />
+                  <text x="272" y="128" font-family="Fredoka, sans-serif" font-weight="700" font-size="20" fill="#7C3AED" class="anim-zzz-1">z</text>
+                  <text x="290" y="108" font-family="Fredoka, sans-serif" font-weight="700" font-size="26" fill="#6D28D9" class="anim-zzz-2">Z</text>
+                  <text x="310" y="86" font-family="Fredoka, sans-serif" font-weight="700" font-size="32" fill="#5B21B6" class="anim-zzz-3">Z</text>
+                </g>
+
+                <!-- Storytelling Orbiting Planet & Magic Sparkles -->
+                <g id="prop-magic-aura" class="bot-prop">
+                  <g class="anim-float-slow">
+                    <circle cx="64" cy="96" r="13" fill="#FFB703" stroke="#1E2246" stroke-width="4" />
+                    <ellipse cx="64" cy="96" rx="22" ry="5.5" transform="rotate(-22 64 96)" fill="none" stroke="#6EE7D8" stroke-width="3.8" />
+                  </g>
+                  <path d="M306 104 C318 94, 330 108, 319 119 C310 127, 300 116, 308 110"
+                        fill="none" stroke="#A855F7" stroke-width="4" stroke-linecap="round" class="anim-float-fast" />
+                  <polygon points="302,68 305,75 312,78 305,81 302,88 299,81 292,78 299,75" fill="#FFD447" />
+                  <circle cx="78" cy="144" r="4.5" fill="#F472B6" class="anim-float-fast" />
+                </g>
+
+                <!-- Celebrating Fireworks & Confetti -->
+                <g id="prop-celebrate-fx" class="bot-prop">
+                  <g stroke="#F43F5E" stroke-width="3.5" stroke-linecap="round" class="anim-confetti">
+                    <line x1="68" y1="74" x2="68" y2="58" />
+                    <line x1="68" y1="98" x2="68" y2="112" />
+                    <line x1="56" y1="86" x2="42" y2="86" />
+                    <line x1="80" y1="86" x2="94" y2="86" />
+                    <line x1="59" y1="77" x2="50" y2="68" />
+                    <line x1="77" y1="95" x2="86" y2="104" />
+                  </g>
+                  <g stroke="#F59E0B" stroke-width="3.5" stroke-linecap="round" class="anim-confetti">
+                    <line x1="312" y1="74" x2="312" y2="58" />
+                    <line x1="312" y1="98" x2="312" y2="112" />
+                    <line x1="300" y1="86" x2="286" y2="86" />
+                    <line x1="324" y1="86" x2="338" y2="86" />
+                    <line x1="303" y1="95" x2="294" y2="104" />
+                    <line x1="321" y1="77" x2="330" y2="68" />
+                  </g>
+                  <rect x="92" y="132" width="9" height="9" rx="2" fill="#38BDF8" transform="rotate(20 96 136)" class="anim-float-fast" />
+                  <rect x="282" y="130" width="9" height="9" rx="2" fill="#A855F7" transform="rotate(-18 286 134)" class="anim-float-slow" />
+                  <circle cx="116" cy="54" r="5" fill="#34D399" />
+                  <circle cx="264" cy="54" r="5" fill="#F472B6" />
+                </g>
+
+                <!-- Singing Musical Notes -->
+                <g id="prop-music-notes" class="bot-prop">
+                  <g class="anim-float-fast" fill="#7C3AED" stroke="#1E2246" stroke-width="2.5" stroke-linejoin="round">
+                    <circle cx="72" cy="116" r="6" />
+                    <path d="M77 116 L77 92 L92 88 L92 112" fill="none" stroke-width="4" stroke-linecap="round" />
+                    <circle cx="87" cy="112" r="6" />
+                  </g>
+                  <g class="anim-float-slow" fill="#EC4899" stroke="#1E2246" stroke-width="2.5" stroke-linejoin="round">
+                    <circle cx="304" cy="108" r="6" />
+                    <path d="M309 108 L309 84 L320 88" fill="none" stroke-width="4" stroke-linecap="round" />
+                  </g>
+                </g>
+
+                <!-- Happy / Proud / Shy Floating Hearts & Stars -->
+                <g id="prop-hearts-stars" class="bot-prop">
+                  <path d="M76 96 C76 96, 63 87, 63 80 C63 75.5, 66.5 72.5, 70.5 72.5 C73.2 72.5, 75.2 74, 76 76 C76.8 74, 78.8 72.5, 81.5 72.5 C85.5 72.5, 89 75.5, 89 80 C89 87, 76 96, 76 96 Z"
+                        fill="#FF6B8B" stroke="#1E2246" stroke-width="3" class="anim-float-slow" />
+                  <path d="M306 94 C306 94, 294 86, 294 79.5 C294 75.5, 297 73, 300.5 73 C303 73, 305 74.2, 306 76 C307 74.2, 309 73, 311.5 73 C315 73, 318 75.5, 318 79.5 C318 86, 306 94, 306 94 Z"
+                        fill="#FF6B8B" stroke="#1E2246" stroke-width="3" class="anim-float-fast" />
+                  <polygon points="310,136 313,143 320,146 313,149 310,156 307,149 300,146 307,143" fill="#FFD447" />
+                  <polygon points="68,142 70.5,147.5 76,150 70.5,152.5 68,158 65.5,152.5 60,150 65.5,147.5" fill="#FFD447" />
+                </g>
+
+                <!-- Giggle Motion Lines & Notes -->
+                <g id="prop-giggle-fx" class="bot-prop">
+                  <g stroke="#1E2246" stroke-width="3.5" stroke-linecap="round">
+                    <line x1="56" y1="114" x2="68" y2="120" />
+                    <line x1="52" y1="136" x2="66" y2="136" />
+                    <line x1="324" y1="114" x2="312" y2="120" />
+                    <line x1="328" y1="136" x2="314" y2="136" />
+                  </g>
+                  <circle cx="298" cy="84" r="5" fill="#F59E0B" />
+                  <path d="M302 84 L302 66 L312 69" fill="none" stroke="#1E2246" stroke-width="3.5" stroke-linecap="round" />
+                </g>
+
+                <!-- Sad Little Raincloud -->
+                <g id="prop-raincloud" class="bot-prop">
+                  <path d="M276 66 C268 66, 264 58, 270 52 C272 44, 284 42, 290 48 C296 42, 308 45, 309 53 C316 56, 314 66, 305 66 Z"
+                        fill="#93C5FD" stroke="#1E2246" stroke-width="3.5" stroke-linejoin="round" />
+                  <line x1="280" y1="73" x2="277" y2="82" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" class="anim-tear" />
+                  <line x1="292" y1="75" x2="289" y2="84" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" class="anim-tear" />
+                  <line x1="303" y1="73" x2="300" y2="82" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" class="anim-tear" />
+                </g>
+
+                <!-- Angry Steam Puffs & Sparks -->
+                <g id="prop-steam" class="bot-prop">
+                  <circle cx="62" cy="96" r="10" fill="#E2E8F0" stroke="#1E2246" stroke-width="3" class="anim-steam-l" />
+                  <circle cx="318" cy="96" r="10" fill="#E2E8F0" stroke="#1E2246" stroke-width="3" class="anim-steam-r" />
+                  <polyline points="118,56 112,66 122,66 116,76" fill="none" stroke="#F59E0B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+                  <polyline points="262,56 268,66 258,66 264,76" fill="none" stroke="#F59E0B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+                </g>
+
+                <!-- Tired Yawn Bubble & Small z -->
+                <g id="prop-tired-fx" class="bot-prop">
+                  <circle cx="72" cy="116" r="13" fill="#BAE6FD" fill-opacity="0.7" stroke="#38BDF8" stroke-width="3" class="anim-float-slow" />
+                  <circle cx="92" cy="94" r="7" fill="#BAE6FD" fill-opacity="0.7" stroke="#38BDF8" stroke-width="2.5" class="anim-float-fast" />
+                  <text x="296" y="102" font-family="Fredoka, sans-serif" font-weight="700" font-size="22" fill="#0284C7" class="anim-zzz-1">z</text>
+                </g>
+
+                <!-- Waiting Clock, '?' & '...' -->
+                <g id="prop-waiting-fx" class="bot-prop">
+                  <circle cx="304" cy="78" r="18" fill="#FFFFFF" stroke="#1E2246" stroke-width="4" />
+                  <polyline points="304,68 304,78 311,82" fill="none" stroke="#1E2246" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+                  <text x="304" y="188" font-family="Fredoka, sans-serif" font-weight="700" font-size="26" fill="#1E2246" class="anim-float-fast">?</text>
+                  <g fill="#1E2246">
+                    <circle cx="52" cy="168" r="3.5" />
+                    <circle cx="64" cy="168" r="3.5" />
+                    <circle cx="76" cy="168" r="3.5" />
+                  </g>
+                </g>
+
+                <!-- Jump Scared '!?' & Shock Lines -->
+                <g id="prop-scared-fx" class="bot-prop">
+                  <polyline points="72,76 54,84 68,94 50,104" fill="none" stroke="#F59E0B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+                  <text x="294" y="88" font-family="Fredoka, sans-serif" font-weight="700" font-size="34" fill="#EF4444" stroke="#1E2246" stroke-width="2">!?</text>
+                </g>
+
+                <!-- Listening Sound Waves -->
+                <g id="prop-listen-waves" class="bot-prop">
+                  <path d="M58 124 C48 136, 48 152, 58 164" fill="none" stroke="#06B6D4" stroke-width="4" stroke-linecap="round" class="anim-pulse-wave" />
+                  <path d="M46 114 C32 132, 32 156, 46 174" fill="none" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round" class="anim-pulse-wave" />
+                </g>
+
+                <!-- Talking Voice Equalizer Arcs -->
+                <g id="prop-talk-waves" class="bot-prop">
+                  <path d="M318 126 C328 138, 328 152, 318 164" fill="none" stroke="#10B981" stroke-width="4" stroke-linecap="round" class="anim-pulse-wave" />
+                  <path d="M330 116 C344 134, 344 156, 330 174" fill="none" stroke="#34D399" stroke-width="3.5" stroke-linecap="round" class="anim-pulse-wave" />
+                </g>
+
+                <!-- Thinking Thought Bubbles -->
+                <g id="prop-think-bubbles" class="bot-prop">
+                  <circle cx="288" cy="96" r="6" fill="#FFFFFF" stroke="#1E2246" stroke-width="3" class="anim-float-fast" />
+                  <circle cx="304" cy="78" r="9" fill="#FFFFFF" stroke="#1E2246" stroke-width="3" class="anim-float-slow" />
+                  <circle cx="326" cy="58" r="14" fill="#FEF08A" stroke="#1E2246" stroke-width="3.5" class="anim-float-slow" />
+                </g>
+
+                <!-- Curious Floating '?' -->
+                <g id="prop-curious-q" class="bot-prop">
+                  <text x="296" y="88" font-family="Fredoka, sans-serif" font-weight="700" font-size="36" fill="#8B5CF6" stroke="#1E2246" stroke-width="2" class="anim-float-slow">?</text>
+                </g>
+              </g>
+
+              <!-- ==============================================================
+                   MAIN ARTICULATED CHARACTER CONTAINER (#bot-whole)
+                   Layers 2 -> 3 -> 4 -> 5 ensure arms & hands are ALWAYS ON TOP
+                   ============================================================== -->
+              <g id="bot-whole">
+
+                <!-- LAYER 2: TORSO, FEET & CHEST HEART-GEAR (#body-group) -->
+                <g id="body-group" class="bot-hotspot" data-hotspot="chest" style="cursor: pointer;">
+                  <!-- Cute Little Robot Feet -->
+                  <rect x="152" y="312" width="30" height="19" rx="9.5" fill="#38BDF8" stroke="#1E2246" stroke-width="4.5" />
+                  <path d="M158 325 L176 325" stroke="#FFE66D" stroke-width="3.5" stroke-linecap="round" />
+
+                  <rect x="198" y="312" width="30" height="19" rx="9.5" fill="#38BDF8" stroke="#1E2246" stroke-width="4.5" />
+                  <path d="M204 325 L222 325" stroke="#FFE66D" stroke-width="3.5" stroke-linecap="round" />
+
+                  <!-- Neck Collar -->
+                  <rect x="168" y="204" width="44" height="18" rx="7" fill="#38BDF8" stroke="#1E2246" stroke-width="4.5" />
+
+                  <!-- Rounded Yellow & Mint-Cyan Torso -->
+                  <path d="M136 220 C136 213, 244 213, 244 220 L251 286 C253 305, 235 318, 190 318 C145 318, 127 305, 129 286 Z"
+                        fill="url(#torsoGrad)" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+
+                  <!-- Torso Top Shine -->
+                  <path d="M152 224 Q190 220 228 224" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" opacity="0.72" />
+
+                  <!-- Chest Display Screen -->
+                  <rect x="168" y="236" width="44" height="42" rx="11" fill="#1b243b" stroke="#1E2246" stroke-width="4" />
+
+                  <!-- Rotating Golden Heart-Gear -->
+                  <g id="chest-gear">
+                    <circle cx="190" cy="257" r="11" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="2.5" />
+                    <g fill="#FFD447" stroke="#1E2246" stroke-width="2">
+                      <rect x="187.8" y="242" width="4.4" height="4.8" rx="1.2" />
+                      <rect x="187.8" y="267.2" width="4.4" height="4.8" rx="1.2" />
+                      <rect x="175" y="254.8" width="4.8" height="4.4" rx="1.2" />
+                      <rect x="200.2" y="254.8" width="4.8" height="4.4" rx="1.2" />
+                      <rect x="179" y="246" width="4.4" height="4.4" rx="1.2" transform="rotate(45 181.2 248.2)" />
+                      <rect x="196.6" y="263.6" width="4.4" height="4.4" rx="1.2" transform="rotate(45 198.8 265.8)" />
+                      <rect x="196.6" y="246" width="4.4" height="4.4" rx="1.2" transform="rotate(-45 198.8 248.2)" />
+                      <rect x="179" y="263.6" width="4.4" height="4.4" rx="1.2" transform="rotate(-45 181.2 265.8)" />
+                    </g>
+                    <!-- Heart Cutout Emblem -->
+                    <path d="M190 262 C190 262, 183.5 257.8, 183.5 254.5 C183.5 252.5, 185.1 251.2, 187 251.2 C188.3 251.2, 189.4 252, 190 253 C190.6 252, 191.7 251.2, 193 251.2 C194.9 251.2, 196.5 252.5, 196.5 254.5 C196.5 257.8, 190 262, 190 262 Z"
+                          fill="#FF6B8B" />
+                  </g>
+
+                  <!-- Two Vertical Indicator Dots on Chest Right -->
+                  <circle cx="226" cy="249" r="4" fill="#56F0FF" stroke="#1E2246" stroke-width="2.5" />
+                  <circle cx="226" cy="264" r="4" fill="#FFD447" stroke="#1E2246" stroke-width="2.5" />
+                </g>
+
+                <!-- LAYER 3: HEAD, ANTENNA, FACE SCREEN, GLASSES & WIZARD HAT (#head-group) -->
+                <g id="head-group">
+                  <!-- Star Antenna (Hotspot) -->
+                  <g id="antenna-group" class="bot-hotspot" data-hotspot="antenna" style="cursor: pointer;">
+                    <path d="M172 72 C172 60, 208 60, 208 72 Z" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+                    <line x1="190" y1="62" x2="190" y2="44" stroke="#1E2246" stroke-width="4.5" stroke-linecap="round" />
+                    <g stroke="#FFD447" stroke-width="3" stroke-linecap="round" opacity="0.9">
+                      <line x1="190" y1="10" x2="190" y2="16" />
+                      <line x1="165" y1="21" x2="170" y2="25" />
+                      <line x1="215" y1="21" x2="210" y2="25" />
+                    </g>
+                    <polygon points="190,17 195,27.5 206.5,29 198,37 200,48.5 190,43 180,48.5 182,37 173.5,29 185,27.5"
+                             fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4" stroke-linejoin="round" />
+                    <circle cx="186.5" cy="29" r="2" fill="#FFFFFF" opacity="0.9" />
+                  </g>
+
+                  <!-- Left & Right Golden Ear-Caps -->
+                  <rect x="74" y="118" width="20" height="48" rx="10" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.5" />
+                  <rect x="286" y="118" width="20" height="48" rx="10" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.5" />
+
+                  <!-- Rounded Mint-Cyan Head Bezel -->
+                  <rect x="90" y="72" width="200" height="138" rx="40" fill="url(#mintGrad)" stroke="#1E2246" stroke-width="4.5" />
+                  <path d="M126 82 L254 82" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" opacity="0.72" />
+                  <circle cx="250" cy="202" r="2.2" fill="#1E2246" />
+                  <circle cx="259" cy="202" r="2.2" fill="#1E2246" />
+
+                  <!-- Dark Navy Face Screen (#1b243b) -->
+                  <rect x="108" y="88" width="164" height="106" rx="28" fill="#1b243b" stroke="#1E2246" stroke-width="4" />
+
+                  <!-- Clipped Face Screen Interior -->
+                  <g clip-path="url(#screen-clip)" class="bot-hotspot" data-hotspot="face" style="cursor: pointer;">
+                    <!-- Angry Red Visor Tint -->
+                    <rect id="angry-screen-tint" x="108" y="88" width="164" height="106" fill="url(#angryGrad)" />
+
+                    <!-- Subtle Screen Reflection -->
+                    <path d="M120 108 C120 97, 132 94, 152 94" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity="0.16" />
+
+                    <!-- Eyebrows -->
+                    <rect id="brow-left" x="138" y="106" width="22" height="4.5" rx="2.25" fill="#6EE7D8" opacity="0.88" />
+                    <rect id="brow-right" x="220" y="106" width="22" height="4.5" rx="2.25" fill="#6EE7D8" opacity="0.88" />
+
+                    <!-- Coral-Pink Oval Cheeks -->
+                    <g id="cheeks-group" opacity="0.9">
+                      <ellipse cx="135" cy="159" rx="11.5" ry="6.2" fill="#FF8577" />
+                      <ellipse cx="245" cy="159" rx="11.5" ry="6.2" fill="#FF8577" />
+                    </g>
+
+                    <!-- EYE LAYER 1: Standard Star-Sparkle Glowing Cyan Eyes -->
+                    <g class="eye-layer eye-open">
+                      <g id="eye-left-wrap" class="eye-open-scale">
+                        <circle cx="150" cy="134" r="18.5" fill="#111629" stroke="#56F0FF" stroke-width="3.8" />
+                        <g id="pupil-left">
+                          <circle cx="150" cy="134" r="12" fill="#18223F" />
+                          <circle cx="144" cy="128" r="4.6" fill="#FFFFFF" />
+                          <circle cx="156" cy="140" r="2" fill="#FFFFFF" opacity="0.85" />
+                          <path d="M154.5 124 L155.8 128 L159.8 129.3 L155.8 130.6 L154.5 134.6 L153.2 130.6 L149.2 129.3 L153.2 128 Z" fill="#FFE66D" />
+                        </g>
+                      </g>
+                      <g id="eye-right-wrap" class="eye-open-scale">
+                        <circle cx="230" cy="134" r="18.5" fill="#111629" stroke="#56F0FF" stroke-width="3.8" />
+                        <g id="pupil-right">
+                          <circle cx="230" cy="134" r="12" fill="#18223F" />
+                          <circle cx="224" cy="128" r="4.6" fill="#FFFFFF" />
+                          <circle cx="236" cy="140" r="2" fill="#FFFFFF" opacity="0.85" />
+                          <path d="M234.5 124 L235.8 128 L239.8 129.3 L235.8 130.6 L234.5 134.6 L233.2 130.6 L229.2 129.3 L233.2 128 Z" fill="#FFE66D" />
+                        </g>
+                      </g>
+                    </g>
+
+                    <!-- EYE LAYER 2: Happy / Giggle / Singing Closed Arcs (^ ^) -->
+                    <g class="eye-layer eye-happy-arcs">
+                      <path d="M134 138 Q150 118 166 138" fill="none" stroke="#56F0FF" stroke-width="5.5" stroke-linecap="round" />
+                      <path d="M214 138 Q230 118 246 138" fill="none" stroke="#56F0FF" stroke-width="5.5" stroke-linecap="round" />
+                    </g>
+
+                    <!-- EYE LAYER 3: Sad Puppy Eyes + Falling Tear -->
+                    <g class="eye-layer eye-sad">
+                      <circle cx="150" cy="136" r="17" fill="#111629" stroke="#56F0FF" stroke-width="3.5" />
+                      <circle cx="146" cy="131" r="5" fill="#FFFFFF" />
+                      <circle cx="155" cy="141" r="2.5" fill="#FFFFFF" />
+                      <circle cx="230" cy="136" r="17" fill="#111629" stroke="#56F0FF" stroke-width="3.5" />
+                      <circle cx="226" cy="131" r="5" fill="#FFFFFF" />
+                      <circle cx="235" cy="141" r="2.5" fill="#FFFFFF" />
+                      <path d="M246 146 C246 146, 252 155, 252 159 C252 162.5, 249.5 165, 246 165 C242.5 165, 240 162.5, 240 159 C240 155, 246 146, 246 146 Z"
+                            fill="#60EFFF" class="anim-tear" />
+                    </g>
+
+                    <!-- EYE LAYER 4: Angry Slanted Glowing Eyes -->
+                    <g class="eye-layer eye-angry">
+                      <path d="M132 125 L168 136 C166 149, 150 153, 139 147 C131 142, 130 132, 132 125 Z"
+                            fill="#FFD447" stroke="#FF6B35" stroke-width="2.5" />
+                      <path d="M248 125 L212 136 C214 149, 230 153, 241 147 C249 142, 250 132, 248 125 Z"
+                            fill="#FFD447" stroke="#FF6B35" stroke-width="2.5" />
+                    </g>
+
+                    <!-- EYE LAYER 5: Tired Half-Lidded Eyes -->
+                    <g class="eye-layer eye-tired">
+                      <circle cx="150" cy="136" r="16.5" fill="#111629" stroke="#56F0FF" stroke-width="3.5" />
+                      <circle cx="150" cy="140" r="5.5" fill="#56F0FF" opacity="0.7" />
+                      <rect x="131" y="117" width="38" height="17" fill="#1b243b" />
+                      <line x1="133" y1="134" x2="167" y2="134" stroke="#56F0FF" stroke-width="4.2" stroke-linecap="round" />
+
+                      <circle cx="230" cy="136" r="16.5" fill="#111629" stroke="#56F0FF" stroke-width="3.5" />
+                      <circle cx="230" cy="140" r="5.5" fill="#56F0FF" opacity="0.7" />
+                      <rect x="211" y="117" width="38" height="17" fill="#1b243b" />
+                      <line x1="213" y1="134" x2="247" y2="134" stroke="#56F0FF" stroke-width="4.2" stroke-linecap="round" />
+                    </g>
+
+                    <!-- EYE LAYER 6: Peaceful Closed Sleeping Eyes (u u) -->
+                    <g class="eye-layer eye-sleep">
+                      <path d="M135 134 Q150 148 165 134" fill="none" stroke="#56F0FF" stroke-width="5" stroke-linecap="round" />
+                      <path d="M215 134 Q230 148 245 134" fill="none" stroke="#56F0FF" stroke-width="5" stroke-linecap="round" />
+                    </g>
+
+                    <!-- EYE LAYER 7: Jump Scared Wide Shocked Eyes -->
+                    <g class="eye-layer eye-scared">
+                      <circle cx="150" cy="134" r="19.5" fill="#FFFFFF" stroke="#56F0FF" stroke-width="3.8" />
+                      <circle cx="150" cy="134" r="6" fill="#1E2246" />
+                      <circle cx="230" cy="134" r="19.5" fill="#FFFFFF" stroke="#56F0FF" stroke-width="3.8" />
+                      <circle cx="230" cy="134" r="6" fill="#1E2246" />
+                    </g>
+
+                    <!-- MOUTH VARIANTS -->
+                    <path class="mouth-layer mouth-smile" d="M178 160 Q190 172 202 160"
+                          fill="none" stroke="#FFD447" stroke-width="5" stroke-linecap="round" />
+
+                    <path class="mouth-layer mouth-proud" d="M174 159 Q190 176 206 159 Z"
+                          fill="#FFD447" stroke="#FFD447" stroke-width="2.5" stroke-linejoin="round" />
+
+                    <g class="mouth-layer mouth-giggle">
+                      <path d="M174 158 Q190 161 206 158 C206 175, 198 181, 190 181 C182 181, 174 175, 174 158 Z"
+                            fill="#FF6B8B" stroke="#FFD447" stroke-width="3.2" stroke-linejoin="round" />
+                      <path d="M181 176 Q190 170 199 176" fill="none" stroke="#FFA8BA" stroke-width="3.5" stroke-linecap="round" />
+                    </g>
+
+                    <path class="mouth-layer mouth-sad" d="M178 171 Q190 159 202 171"
+                          fill="none" stroke="#FFD447" stroke-width="5" stroke-linecap="round" />
+
+                    <line class="mouth-layer mouth-flat" x1="179" y1="165" x2="201" y2="165"
+                          stroke="#FFD447" stroke-width="4.5" stroke-linecap="round" />
+
+                    <ellipse class="mouth-layer mouth-curious" cx="193" cy="166" rx="6.2" ry="7.2"
+                             fill="#FF6B8B" stroke="#FFD447" stroke-width="3.2" />
+
+                    <ellipse class="mouth-layer mouth-yawn" cx="190" cy="167" rx="9" ry="11.5"
+                             fill="#FF6B8B" stroke="#FFD447" stroke-width="3.2" />
+
+                    <path class="mouth-layer mouth-scared" d="M178 170 C178 156, 202 156, 202 170 C202 177, 178 177, 178 170 Z"
+                          fill="#FF6B8B" stroke="#FFD447" stroke-width="3.2" />
+
+                    <!-- Real-Time Lip-Sync Dynamic Mouth (--mouth-open 0..1) -->
+                    <g class="mouth-layer mouth-dynamic">
+                      <ellipse id="dynamic-mouth-shape" cx="190" cy="164" rx="13.5" ry="10.5"
+                               fill="#FF6B8B" stroke="#FFD447" stroke-width="3.6" />
+                    </g>
+                  </g>
+
+                  <!-- Teaching Round Glasses Overlay -->
+                  <g id="prop-glasses" class="bot-prop">
+                    <circle cx="150" cy="134" r="24" fill="#FFFFFF" fill-opacity="0.08" stroke="#1E2246" stroke-width="4.5" />
+                    <circle cx="230" cy="134" r="24" fill="#FFFFFF" fill-opacity="0.08" stroke="#1E2246" stroke-width="4.5" />
+                    <path d="M174 132 Q190 127 206 132" fill="none" stroke="#1E2246" stroke-width="4.5" stroke-linecap="round" />
+                    <line x1="112" y1="128" x2="126" y2="132" stroke="#1E2246" stroke-width="4" stroke-linecap="round" />
+                    <line x1="254" y1="132" x2="268" y2="128" stroke="#1E2246" stroke-width="4" stroke-linecap="round" />
+                  </g>
+
+                  <!-- Storytelling Purple Wizard Hat Overlay -->
+                  <g id="prop-wizard-hat" class="bot-prop">
+                    <path d="M130 80 C150 73, 230 73, 250 80 C237 87, 143 87, 130 80 Z"
+                          fill="url(#purpleGrad)" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+                    <path d="M148 77 L185 15 C189 9, 196 11, 201 20 L232 77 Z"
+                          fill="url(#purpleGrad)" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+                    <path d="M151 70 Q190 75 229 70" fill="none" stroke="#FFD447" stroke-width="6.5" stroke-linecap="round" />
+                    <polygon points="187,34 190,40 196,41 191,45 192,51 187,48 182,51 183,45 178,41 184,40" fill="#FFE66D" />
+                    <circle cx="205" cy="56" r="2.8" fill="#FFE66D" />
+                  </g>
+                </g>
+
+                <!-- ============================================================
+                     LAYER 4: FOREGROUND PROPS (#prop-book, #prop-waiting-desk)
+                     Rendered BEFORE Layer 5 so BOTH hands grip ON TOP of book/desk!
+                     ============================================================ -->
+                <g id="fg-props-layer">
+                  <!-- Waiting Desk Surface Line -->
+                  <g id="prop-waiting-desk" class="bot-prop">
+                    <line x1="88" y1="296" x2="292" y2="296" stroke="#1E2246" stroke-width="5" stroke-linecap="round" />
+                  </g>
+
+                  <!-- Open Magical Storybook -->
+                  <g id="prop-book" class="bot-prop">
+                    <path d="M124 248 L190 262 L256 248 L250 306 L190 318 L130 306 Z"
+                          fill="url(#purpleGrad)" stroke="#1E2246" stroke-width="4.5" stroke-linejoin="round" />
+                    <path d="M132 244 L190 257 L248 244 L243 298 L190 310 L137 298 Z"
+                          fill="#FFFDF7" stroke="#1E2246" stroke-width="3.8" stroke-linejoin="round" />
+                    <line x1="190" y1="257" x2="190" y2="310" stroke="#1E2246" stroke-width="3.5" stroke-linecap="round" />
+                    <line x1="146" y1="264" x2="178" y2="270" stroke="#A78BFA" stroke-width="3.5" stroke-linecap="round" />
+                    <line x1="146" y1="276" x2="176" y2="282" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round" />
+                    <line x1="202" y1="270" x2="234" y2="264" stroke="#F472B6" stroke-width="3.5" stroke-linecap="round" />
+                    <line x1="204" y1="282" x2="234" y2="276" stroke="#FBBF24" stroke-width="3.5" stroke-linecap="round" />
+                    <polygon points="172,226 174.5,231.5 180,234 174.5,236.5 172,242 169.5,236.5 164,234 169.5,231.5"
+                             fill="#FFD447" stroke="#1E2246" stroke-width="2" class="anim-float-fast" />
+                    <polygon points="208,220 210.5,225.5 216,228 210.5,230.5 208,236 205.5,230.5 200,228 205.5,225.5"
+                             fill="#FF85A1" stroke="#1E2246" stroke-width="2" class="anim-float-slow" />
+                  </g>
+                </g>
+
+                <!-- ============================================================
+                     LAYER 5 (60FPS PROCEDURAL ARTICULATED ARMS & HANDS ENGINE):
+                     - Locked Golden Shoulder Pauldrons at (126,232) & (254,232)
+                     - Curved Segmented Cyan Arm Tubes with perpendicular bands
+                     - Oriented Wrist Cuffs + Dual-Style Hands ('open' & 'curled')
+                     - Interactive Grab-and-Drag IK on both hands!
+                     ============================================================ -->
+                <g id="arms-kinematic-layer">
+
+                  <!-- ==================== CANVAS-LEFT ARM (Pip's Right Arm) ==================== -->
+                  <g id="arm-left-assembly">
+                    <!-- Locked Golden Shoulder Socket at (126, 232) -->
+                    <circle cx="126" cy="232" r="14" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.5" />
+                    <path d="M118 226 A9 9 0 0 1 132 224" fill="none" stroke="#FFF9C4" stroke-width="2.5" stroke-linecap="round" />
+
+                    <!-- Dynamic Curved Segmented Cyan Arm Tube -->
+                    <path id="arm-left-outline" d="M 126 232 Q 72 214 68 160" fill="none" stroke="#1E2246" stroke-width="27" stroke-linecap="round" />
+                    <path id="arm-left-fill" d="M 126 232 Q 72 214 68 160" fill="none" stroke="url(#armCyanGrad)" stroke-width="18" stroke-linecap="round" />
+                    <path id="arm-left-shine" d="M 126 232 Q 72 214 68 160" fill="none" stroke="#B8FFEE" stroke-width="5" stroke-linecap="round" opacity="0.65" />
+                    <path id="arm-left-band1" d="M 80 212 L 96 206" fill="none" stroke="#1E2246" stroke-width="3.8" stroke-linecap="round" />
+                    <path id="arm-left-band2" d="M 68 188 L 84 184" fill="none" stroke="#1E2246" stroke-width="3.8" stroke-linecap="round" />
+
+                    <!-- Shoulder Rim Cap for Seamless Joint -->
+                    <circle cx="126" cy="232" r="11.5" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" />
+
+                    <!-- Oriented Hand Group at (wristX, wristY, handAngle) -->
+                    <g id="hand-left-group" class="bot-hotspot ik-hand-grab" data-hotspot="arm_right" data-hand="left" transform="translate(68, 160) rotate(-24)">
+                      <!-- Hand-Held Prop: Curious Magnifying Glass -->
+                      <g id="prop-magnifying-glass" class="bot-prop" transform="translate(26, -34) rotate(18)">
+                        <line x1="-14" y1="22" x2="-4" y2="8" stroke="#D97706" stroke-width="7" stroke-linecap="round" />
+                        <line x1="-14" y1="22" x2="-4" y2="8" stroke="#1E2246" stroke-width="3" stroke-linecap="round" />
+                        <circle cx="6" cy="-6" r="18" fill="#E0F2FE" fill-opacity="0.45" stroke="#FFD54F" stroke-width="6" />
+                        <circle cx="6" cy="-6" r="18" fill="none" stroke="#1E2246" stroke-width="3.8" />
+                        <path d="M -2 -14 A 10 10 0 0 1 12 -14" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+                      </g>
+
+                      <!-- STYLE A: 'open' Fanned Fingers Pose (3 fanned cyan fingers + inward right thumb + golden palm & cuff) -->
+                      <g id="hand-left-open">
+                        <!-- 3 Fanned Chubby Cyan-Mint Fingers -->
+                        <rect x="-5.5" y="-31" width="11" height="20" rx="5.5" transform="rotate(-28 0 -11)" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <rect x="-5.8" y="-34" width="11.6" height="22" rx="5.8" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <rect x="-5.5" y="-31" width="11" height="20" rx="5.5" transform="rotate(28 0 -11)" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <!-- Inward-Facing Cyan Thumb (on +X side for Canvas-Left Hand) -->
+                        <rect x="7" y="-21" width="10.5" height="15.5" rx="5.25" transform="rotate(42 12 -14)" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <!-- Plump Golden Palm -->
+                        <ellipse cx="0" cy="-10.5" rx="14.2" ry="12.2" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.3" />
+                        <path d="M -6 -15 Q 0 -18 6 -15" fill="none" stroke="#FFF9C4" stroke-width="2.4" stroke-linecap="round" opacity="0.85" />
+                        <!-- Golden Wrist Cuff -->
+                        <rect x="-13.5" y="-2" width="27" height="9.5" rx="4.75" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" />
+                      </g>
+
+                      <!-- STYLE B: 'curled' Chubby Curled Fingers Pose (matches GIGGLE, TIRED, WAITING, READING) -->
+                      <g id="hand-left-curled" style="display: none;">
+                        <!-- Golden Wrist Cuff & Rounded Golden Back-of-Hand -->
+                        <rect x="-13.5" y="-1" width="27" height="9.5" rx="4.75" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" />
+                        <path d="M -14 -2 C -15 -16, 15 -16, 14 -2 Z" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" stroke-linejoin="round" />
+                        <!-- 3 Parallel Chubby Cyan-Mint Curled Fingers -->
+                        <rect x="-13.5" y="-23" width="9.5" height="16.5" rx="4.75" fill="#64F5E8" stroke="#1E2246" stroke-width="3.8" />
+                        <rect x="-4.75" y="-25" width="9.5" height="18" rx="4.75" fill="#64F5E8" stroke="#1E2246" stroke-width="3.8" />
+                        <rect x="4" y="-23" width="9.5" height="16.5" rx="4.75" fill="#64F5E8" stroke="#1E2246" stroke-width="3.8" />
+                        <!-- Finger Highlight Dots -->
+                        <circle cx="-8.8" cy="-18" r="1.6" fill="#FFFFFF" opacity="0.85" />
+                        <circle cx="0" cy="-19.5" r="1.6" fill="#FFFFFF" opacity="0.85" />
+                        <circle cx="8.8" cy="-18" r="1.6" fill="#FFFFFF" opacity="0.85" />
+                      </g>
+                    </g>
+                  </g>
+
+                  <!-- ==================== CANVAS-RIGHT ARM (Pip's Left Arm) ==================== -->
+                  <g id="arm-right-assembly">
+                    <!-- Locked Golden Shoulder Socket at (254, 232) -->
+                    <circle cx="254" cy="232" r="14" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.5" />
+                    <path d="M248 224 A9 9 0 0 1 262 226" fill="none" stroke="#FFF9C4" stroke-width="2.5" stroke-linecap="round" />
+
+                    <!-- Dynamic Curved Segmented Cyan Arm Tube -->
+                    <path id="arm-right-outline" d="M 254 232 Q 294 230 306 218" fill="none" stroke="#1E2246" stroke-width="27" stroke-linecap="round" />
+                    <path id="arm-right-fill" d="M 254 232 Q 294 230 306 218" fill="none" stroke="url(#armCyanGrad)" stroke-width="18" stroke-linecap="round" />
+                    <path id="arm-right-shine" d="M 254 232 Q 294 230 306 218" fill="none" stroke="#B8FFEE" stroke-width="5" stroke-linecap="round" opacity="0.65" />
+                    <path id="arm-right-band1" d="M 272 222 L 278 238" fill="none" stroke="#1E2246" stroke-width="3.8" stroke-linecap="round" />
+                    <path id="arm-right-band2" d="M 288 216 L 296 232" fill="none" stroke="#1E2246" stroke-width="3.8" stroke-linecap="round" />
+
+                    <!-- Shoulder Rim Cap for Seamless Joint -->
+                    <circle cx="254" cy="232" r="11.5" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" />
+
+                    <!-- Oriented Hand Group at (wristX, wristY, handAngle) -->
+                    <g id="hand-right-group" class="bot-hotspot ik-hand-grab" data-hotspot="arm_left" data-hand="right" transform="translate(306, 218) rotate(78)">
+                      <!-- Hand-Held Prop 1: Teaching Wooden Pointer Stick (aimed at '★ abc' on chalkboard) -->
+                      <g id="prop-pointer" class="bot-prop">
+                        <line x1="0" y1="-16" x2="12" y2="-66" stroke="#1E2246" stroke-width="8" stroke-linecap="round" />
+                        <line x1="0" y1="-16" x2="12" y2="-66" stroke="#F59E0B" stroke-width="4.2" stroke-linecap="round" />
+                        <circle cx="12" cy="-66" r="4.5" fill="#FFE66D" stroke="#1E2246" stroke-width="2.8" />
+                      </g>
+
+                      <!-- Hand-Held Prop 2: Singing Retro Microphone -->
+                      <g id="prop-microphone" class="bot-prop" transform="translate(0, -24) rotate(-14)">
+                        <rect x="-5" y="-6" width="10" height="22" rx="4" fill="#475569" stroke="#1E2246" stroke-width="3.8" />
+                        <circle cx="0" cy="-14" r="11.5" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <line x1="-8" y1="-14" x2="8" y2="-14" stroke="#1E2246" stroke-width="2.8" />
+                        <line x1="-6" y1="-19" x2="6" y2="-19" stroke="#1E2246" stroke-width="2.2" />
+                      </g>
+
+                      <!-- STYLE A: 'open' Fanned Fingers Pose (3 fanned cyan fingers + inward left thumb + golden palm & cuff) -->
+                      <g id="hand-right-open">
+                        <!-- 3 Fanned Chubby Cyan-Mint Fingers -->
+                        <rect x="-5.5" y="-31" width="11" height="20" rx="5.5" transform="rotate(-28 0 -11)" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <rect x="-5.8" y="-34" width="11.6" height="22" rx="5.8" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <rect x="-5.5" y="-31" width="11" height="20" rx="5.5" transform="rotate(28 0 -11)" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <!-- Inward-Facing Cyan Thumb (on -X side for Canvas-Right Hand) -->
+                        <rect x="-17.5" y="-21" width="10.5" height="15.5" rx="5.25" transform="rotate(-42 -12 -14)" fill="#64F5E8" stroke="#1E2246" stroke-width="4" />
+                        <!-- Plump Golden Palm -->
+                        <ellipse cx="0" cy="-10.5" rx="14.2" ry="12.2" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.3" />
+                        <path d="M -6 -15 Q 0 -18 6 -15" fill="none" stroke="#FFF9C4" stroke-width="2.4" stroke-linecap="round" opacity="0.85" />
+                        <!-- Golden Wrist Cuff -->
+                        <rect x="-13.5" y="-2" width="27" height="9.5" rx="4.75" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" />
+                      </g>
+
+                      <!-- STYLE B: 'curled' Chubby Curled Fingers Pose -->
+                      <g id="hand-right-curled" style="display: none;">
+                        <rect x="-13.5" y="-1" width="27" height="9.5" rx="4.75" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" />
+                        <path d="M -14 -2 C -15 -16, 15 -16, 14 -2 Z" fill="url(#goldGrad)" stroke="#1E2246" stroke-width="4.2" stroke-linejoin="round" />
+                        <rect x="-13.5" y="-23" width="9.5" height="16.5" rx="4.75" fill="#64F5E8" stroke="#1E2246" stroke-width="3.8" />
+                        <rect x="-4.75" y="-25" width="9.5" height="18" rx="4.75" fill="#64F5E8" stroke="#1E2246" stroke-width="3.8" />
+                        <rect x="4" y="-23" width="9.5" height="16.5" rx="4.75" fill="#64F5E8" stroke="#1E2246" stroke-width="3.8" />
+                        <circle cx="-8.8" cy="-18" r="1.6" fill="#FFFFFF" opacity="0.85" />
+                        <circle cx="0" cy="-19.5" r="1.6" fill="#FFFFFF" opacity="0.85" />
+                        <circle cx="8.8" cy="-18" r="1.6" fill="#FFFFFF" opacity="0.85" />
+                      </g>
+                    </g>
+                  </g>
+
+                </g>
+
+              </g>
+            </svg>
+
+            <!-- Floating Particle Burst Container for Tap Reactions -->
+            <div id="tap-particles-layer" class="absolute inset-0 pointer-events-none overflow-visible"></div>
+          </div>
+
+          <!-- Interactive Hotspot Hint Pills -->
+          <div class="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[11px] font-medium text-slate-500">
+            <span class="px-2.5 py-1 rounded-full bg-teal-50 text-teal-800 border border-teal-200 font-semibold shadow-2xs">✋ Grab &amp; Drag Either Hand!</span>
+            <span class="px-2.5 py-1 rounded-full bg-white/80 border border-slate-200/80 shadow-2xs">👆 Tap Face</span>
+            <span class="px-2.5 py-1 rounded-full bg-white/80 border border-slate-200/80 shadow-2xs">⭐ Tap Star</span>
+            <span class="px-2.5 py-1 rounded-full bg-white/80 border border-slate-200/80 shadow-2xs">💛 Tap Heart-Gear</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Agent Live Pipeline Simulator Card -->
+      <div class="bg-white rounded-3xl border border-indigo-100/90 shadow-sm p-5">
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <div class="flex items-center gap-2">
+            <span class="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-bold">🤖</span>
+            <div>
+              <h2 class="font-display font-bold text-base text-slate-900">AI Agent Live Pipeline</h2>
+              <p class="text-xs text-slate-500">Test real-time syllable lip-sync &amp; turn-taking states</p>
+            </div>
+          </div>
+
+          <button id="btn-run-pipeline" type="button"
+            class="min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-sm transition-all active:scale-95 flex items-center gap-1.5">
+            <span>▶</span>
+            <span>Run Agent Flow</span>
+          </button>
+        </div>
+
+        <!-- Pipeline Step Indicator -->
+        <div class="grid grid-cols-4 gap-1.5 mb-3.5 text-center text-[11px] font-semibold">
+          <div data-step="listening" class="pipeline-pill py-1.5 px-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200/70 transition-all">1. Listen</div>
+          <div data-step="thinking" class="pipeline-pill py-1.5 px-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200/70 transition-all">2. Think</div>
+          <div data-step="talking" class="pipeline-pill py-1.5 px-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200/70 transition-all">3. Speak</div>
+          <div data-step="celebrating" class="pipeline-pill py-1.5 px-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200/70 transition-all">4. Cheer</div>
+        </div>
+
+        <!-- Custom Phrase Lip-Sync Input -->
+        <form id="speak-form" class="flex gap-2">
+          <input id="speak-input" type="text"
+            value="Great job! Stars shine because they are giant glowing balls of gas!"
+            placeholder="Type something for Pip to say..."
+            class="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition" />
+          <button type="submit"
+            class="min-h-[42px] px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs sm:text-sm font-bold shadow-sm transition-all active:scale-95 flex items-center gap-1.5 shrink-0">
+            <span>🗣️</span>
+            <span>Speak</span>
+          </button>
+        </form>
+
+        <!-- Manual Lip-Sync (--mouth-open) Slider for AI Voice Testing -->
+        <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center gap-3">
+          <label for="mouth-open-slider" class="text-[11px] font-semibold text-slate-500 shrink-0">
+            Lip-Sync (<code class="text-indigo-600">--mouth-open</code>):
+          </label>
+          <input id="mouth-open-slider" type="range" min="0" max="1" step="0.02" value="0"
+            class="w-full accent-indigo-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg" />
+          <span id="mouth-open-val" class="text-[11px] font-mono font-semibold text-slate-600 w-8 text-right">0.00</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN: 20-State Interactive Action Grid -->
+    <section class="lg:col-span-7 flex flex-col gap-5">
+
+      <!-- Category 1: AI Agent Pipeline States (5) -->
+      <div class="bg-white rounded-3xl border border-indigo-100/90 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-3.5">
+          <div class="flex items-center gap-2">
+            <span class="px-2.5 py-1 rounded-xl bg-cyan-100 text-cyan-800 text-xs font-bold">5 States</span>
+            <h2 class="font-display font-bold text-lg text-slate-900">AI Agent Pipeline</h2>
+          </div>
+          <span class="text-xs text-slate-400 hidden sm:inline">Conversational turn-taking &amp; voice states</span>
+        </div>
+
+        <div id="grid-agent" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5"></div>
+      </div>
+
+      <!-- Category 2: Kid Emotions & Touch Reactions (11) -->
+      <div class="bg-white rounded-3xl border border-indigo-100/90 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-3.5">
+          <div class="flex items-center gap-2">
+            <span class="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800 text-xs font-bold">11 States</span>
+            <h2 class="font-display font-bold text-lg text-slate-900">Kid Emotions &amp; Touch Reactions</h2>
+          </div>
+          <button id="btn-random-state" type="button"
+            class="min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition active:scale-95">
+            🎲 Random Surprise!
+          </button>
+        </div>
+
+        <div id="grid-emotions" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5"></div>
+      </div>
+
+      <!-- Category 3: Learning & Play Activities (4) -->
+      <div class="bg-white rounded-3xl border border-indigo-100/90 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-3.5">
+          <div class="flex items-center gap-2">
+            <span class="px-2.5 py-1 rounded-xl bg-purple-100 text-purple-800 text-xs font-bold">4 States</span>
+            <h2 class="font-display font-bold text-lg text-slate-900">Learning &amp; Play Activities</h2>
+          </div>
+          <span class="text-xs text-slate-400 hidden sm:inline">Contextual educational props</span>
+        </div>
+
+        <div id="grid-learning" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- ==========================================================================
+       EXPORT SVG & AI AGENT CODE MODAL
+       ========================================================================== -->
+  <div id="export-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-3xl max-w-3xl w-full max-h-[88vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+      <!-- Modal Header -->
+      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <div>
+          <h3 class="font-display font-bold text-lg text-slate-900">Export Pip SVG &amp; AI Agent Controller</h3>
+          <p class="text-xs text-slate-500">Drop-in inline SVG + CSS + Web Audio lip-sync bridge for React, Vue, or Vanilla JS</p>
+        </div>
+        <button id="btn-close-export" type="button"
+          class="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 flex items-center justify-center font-bold transition">
+          ✕
+        </button>
+      </div>
+
+      <!-- Code Tabs -->
+      <div class="px-6 pt-3 bg-slate-50/60 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex gap-2">
+          <button type="button" data-tab="svg" class="export-tab px-4 py-2 rounded-t-xl text-xs sm:text-sm font-bold bg-slate-900 text-white transition">
+            1. Standalone SVG + CSS
+          </button>
+          <button type="button" data-tab="agent" class="export-tab px-4 py-2 rounded-t-xl text-xs sm:text-sm font-bold bg-slate-200/70 text-slate-600 hover:text-slate-900 transition">
+            2. AI Agent &amp; Audio Lip-Sync JS
+          </button>
+        </div>
+
+        <button id="btn-copy-code" type="button"
+          class="mb-2 px-4 py-1.5 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white shadow-xs transition active:scale-95 flex items-center gap-1.5">
+          <span>📋</span>
+          <span>Copy Snippet</span>
+        </button>
+      </div>
+
+      <!-- Code Viewer -->
+      <div class="p-5 overflow-y-auto bg-[#0F172A] text-slate-100 font-mono text-xs leading-relaxed flex-1">
+        <pre id="export-code-output" class="whitespace-pre-wrap break-words"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       APPLICATION LOGIC & PIP AGENT CONTROLLER
+       ========================================================================== -->
+  <script>
+    (function () {
+      'use strict';
+
+      // ------------------------------------------------------------------------
+      // 1. State Metadata Catalog (All 20 States)
+      // ------------------------------------------------------------------------
+      const BOT_STATES = [
+        // AI Agent Pipeline (5)
+        { id: 'idle', label: 'Idle', emoji: '✨', category: 'agent', quote: "I'm ready whenever you are!" },
+        { id: 'listening', label: 'Listening', emoji: '👂', category: 'agent', quote: "I'm all ears! Tell me what you're thinking!" },
+        { id: 'thinking', label: 'Thinking', emoji: '🤔', category: 'agent', quote: "Hmm, let me compute the coolest answer..." },
+        { id: 'talking', label: 'Talking', emoji: '🗣️', category: 'agent', quote: "Did you know octopuses have three hearts?!" },
+        { id: 'singing', label: 'Singing', emoji: '🎵', category: 'agent', quote: "La-la-la! Twinkle, twinkle, little star! ♪" },
+
+        // Kid Emotions & Touch Reactions (11)
+        { id: 'happy', label: 'Happy', emoji: '😊', category: 'emotions', quote: "Yay! Learning together is the best!" },
+        { id: 'giggle', label: 'Giggle', emoji: '🤭', category: 'emotions', quote: "Hehehe! That tickles my circuits!" },
+        { id: 'sad', label: 'Sad', emoji: '😢', category: 'emotions', quote: "Aww, don't worry—we can try again!" },
+        { id: 'angry', label: 'Angry', emoji: '😠', category: 'emotions', quote: "Hmph! My gears are overheating!" },
+        { id: 'tired', label: 'Tired', emoji: '🥱', category: 'emotions', quote: "*Yaaawn*... My battery needs a little recharge..." },
+        { id: 'sleeping', label: 'Sleeping', emoji: '😴', category: 'emotions', quote: "Zzz... dreaming of electric sheep... Zzz..." },
+        { id: 'waiting', label: 'Waiting', emoji: '⏳', category: 'emotions', quote: "Take your time! I'm right here waiting..." },
+        { id: 'jump_scared', label: 'Jump Scared', emoji: '😱', category: 'emotions', quote: "WHOA!! You startled my star antenna!" },
+        { id: 'curious', label: 'Curious', emoji: '🧐', category: 'emotions', quote: "Ooh! Let's inspect that with my magnifying glass!" },
+        { id: 'proud', label: 'Proud', emoji: '🌟', category: 'emotions', quote: "Superstar work! I'm SO proud of you!" },
+        { id: 'shy', label: 'Shy', emoji: '👉👈', category: 'emotions', quote: "Aww, thank you! You're making my screen blush!" },
+
+        // Learning & Play Activities (4)
+        { id: 'teaching', label: 'Teaching', emoji: '👩‍🏫', category: 'learning', quote: "Look at the board: A, B, C—easy as 1, 2, 3!" },
+        { id: 'reading', label: 'Reading', emoji: '📖', category: 'learning', quote: "Once upon a time, in a galaxy of stars..." },
+        { id: 'storytelling', label: 'Story Telling', emoji: '🧙‍♂️', category: 'learning', quote: "Abracadabra! Imagine a planet made of rainbow crystals!" },
+        { id: 'celebrating', label: 'Celebrating', emoji: '🎉', category: 'learning', quote: "WOOHOO!! You solved it! High-five!" }
+      ];
+
+      // ------------------------------------------------------------------------
+      // 2. 60FPS PROCEDURAL ARTICULATED SVG ARM & HAND KINEMATICS ENGINE
+      //    - Locked Shoulders: Left=(126,232), Right=(254,232)
+      //    - Smooth spring interpolation + sinusoidal motion + 2D IK Dragging
+      // ------------------------------------------------------------------------
+      const SHOULDER_LEFT = { x: 126, y: 232 };  // Canvas Left (Pip's Right Arm)
+      const SHOULDER_RIGHT = { x: 254, y: 232 }; // Canvas Right (Pip's Left Arm)
+
+      const ARM_POSE_TABLE = {
+        idle: {
+          left:  { cx: 78, cy: 230, wx: 76, wy: 196, angle: -26, style: 'open', bobX: 2, bobY: 5, rotAmp: 8, speed: 2.2 },
+          right: { cx: 294, cy: 236, wx: 304, wy: 244, angle: 116, style: 'open', bobX: 2, bobY: 4, rotAmp: 6, speed: 2.2 }
+        },
+        happy: {
+          left:  { cx: 70, cy: 210, wx: 68, wy: 158, angle: -24, style: 'open', bobX: 5, bobY: 4, rotAmp: 18, speed: 7.5 },
+          right: { cx: 296, cy: 230, wx: 306, wy: 220, angle: 76, style: 'open', bobX: 3, bobY: 5, rotAmp: 10, speed: 3.8 }
+        },
+        giggle: {
+          left:  { cx: 92, cy: 242, wx: 174, wy: 180, angle: 30, style: 'curled', bobX: 1.5, bobY: 4.5, rotAmp: 5, speed: 15 },
+          right: { cx: 294, cy: 232, wx: 302, wy: 228, angle: 82, style: 'open', bobX: 3, bobY: 5, rotAmp: 12, speed: 15 }
+        },
+        sad: {
+          left:  { cx: 94, cy: 256, wx: 98, wy: 284, angle: -162, style: 'open', bobX: 1, bobY: 2.5, rotAmp: 3, speed: 1.5 },
+          right: { cx: 286, cy: 256, wx: 282, wy: 284, angle: 162, style: 'open', bobX: -1, bobY: 2.5, rotAmp: 3, speed: 1.5 }
+        },
+        angry: {
+          left:  { cx: 76, cy: 248, wx: 132, wy: 276, angle: 112, style: 'curled', bobX: 2, bobY: 1.5, rotAmp: 4, speed: 18 },
+          right: { cx: 304, cy: 248, wx: 248, wy: 276, angle: -112, style: 'curled', bobX: -2, bobY: 1.5, rotAmp: 4, speed: 18 }
+        },
+        tired: {
+          left:  { cx: 92, cy: 240, wx: 176, wy: 182, angle: 28, style: 'curled', bobX: 1, bobY: 3, rotAmp: 4, speed: 2.0 },
+          right: { cx: 286, cy: 256, wx: 292, wy: 284, angle: 158, style: 'open', bobX: 1, bobY: 2, rotAmp: 3, speed: 1.6 }
+        },
+        sleeping: {
+          left:  { cx: 88, cy: 238, wx: 146, wy: 210, angle: 34, style: 'curled', bobX: 1, bobY: 2, rotAmp: 2, speed: 1.6 },
+          right: { cx: 262, cy: 258, wx: 182, wy: 214, angle: -28, style: 'curled', bobX: 1, bobY: 2, rotAmp: 2, speed: 1.6 }
+        },
+        waiting: {
+          left:  { cx: 112, cy: 288, wx: 146, wy: 204, angle: 18, style: 'curled', bobX: 0.5, bobY: 1, rotAmp: 1.5, speed: 1.5 },
+          right: { cx: 290, cy: 266, wx: 242, wy: 284, angle: -82, style: 'curled', bobX: 1, bobY: 4, rotAmp: 8, speed: 6.5 }
+        },
+        jump_scared: {
+          left:  { cx: 76, cy: 202, wx: 62, wy: 146, angle: -32, style: 'open', bobX: 3, bobY: 3, rotAmp: 10, speed: 22 },
+          right: { cx: 304, cy: 202, wx: 318, wy: 146, angle: 32, style: 'open', bobX: -3, bobY: 3, rotAmp: 10, speed: 22 }
+        },
+        teaching: {
+          left:  { cx: 84, cy: 248, wx: 106, wy: 262, angle: 122, style: 'curled', bobX: 1, bobY: 2, rotAmp: 3, speed: 2.2 },
+          right: { cx: 276, cy: 246, wx: 298, wy: 210, angle: 38, style: 'curled', bobX: 3, bobY: 4, rotAmp: 7, speed: 3.6 }
+        },
+        reading: {
+          left:  { cx: 86, cy: 254, wx: 126, wy: 274, angle: 78, style: 'curled', bobX: 1, bobY: 2, rotAmp: 3, speed: 2.0 },
+          right: { cx: 294, cy: 254, wx: 254, wy: 274, angle: -78, style: 'curled', bobX: -1, bobY: 2, rotAmp: 3, speed: 2.0 }
+        },
+        storytelling: {
+          left:  { cx: 78, cy: 220, wx: 70, wy: 180, angle: -28, style: 'open', bobX: 4, bobY: 6, rotAmp: 12, speed: 2.8 },
+          right: { cx: 302, cy: 220, wx: 310, wy: 180, angle: 28, style: 'open', bobX: -4, bobY: 6, rotAmp: 12, speed: 2.8 }
+        },
+        celebrating: {
+          left:  { cx: 80, cy: 194, wx: 72, wy: 136, angle: -26, style: 'open', bobX: 5, bobY: 6, rotAmp: 16, speed: 8.5 },
+          right: { cx: 300, cy: 194, wx: 308, wy: 136, angle: 26, style: 'open', bobX: -5, bobY: 6, rotAmp: 16, speed: 8.5 }
+        },
+        listening: {
+          left:  { cx: 72, cy: 208, wx: 90, wy: 156, angle: 18, style: 'open', bobX: 1.5, bobY: 3, rotAmp: 5, speed: 2.6 },
+          right: { cx: 292, cy: 238, wx: 298, wy: 244, angle: 114, style: 'open', bobX: 1.5, bobY: 3, rotAmp: 4, speed: 2.2 }
+        },
+        thinking: {
+          left:  { cx: 98, cy: 256, wx: 168, wy: 196, angle: 34, style: 'curled', bobX: 1.5, bobY: 3, rotAmp: 6, speed: 4.2 },
+          right: { cx: 290, cy: 254, wx: 236, wy: 258, angle: -78, style: 'curled', bobX: 1, bobY: 1.5, rotAmp: 2, speed: 2.0 }
+        },
+        talking: {
+          left:  { cx: 82, cy: 238, wx: 84, wy: 212, angle: -20, style: 'open', bobX: 4, bobY: 6, rotAmp: 14, speed: 6.2 },
+          right: { cx: 298, cy: 238, wx: 296, wy: 212, angle: 20, style: 'open', bobX: -4, bobY: 6, rotAmp: 14, speed: 5.6 }
+        },
+        singing: {
+          left:  { cx: 76, cy: 214, wx: 72, wy: 168, angle: -24, style: 'open', bobX: 5, bobY: 6, rotAmp: 14, speed: 5.2 },
+          right: { cx: 286, cy: 248, wx: 214, wy: 194, angle: -32, style: 'curled', bobX: 2, bobY: 2.5, rotAmp: 4, speed: 5.2 }
+        },
+        curious: {
+          left:  { cx: 78, cy: 222, wx: 108, wy: 176, angle: 22, style: 'curled', bobX: 1.5, bobY: 2.5, rotAmp: 3, speed: 2.2 },
+          right: { cx: 292, cy: 238, wx: 300, wy: 244, angle: 112, style: 'open', bobX: 2, bobY: 3, rotAmp: 5, speed: 2.2 }
+        },
+        proud: {
+          left:  { cx: 76, cy: 236, wx: 126, wy: 268, angle: 112, style: 'curled', bobX: 1, bobY: 2, rotAmp: 2.5, speed: 2.0 },
+          right: { cx: 304, cy: 236, wx: 254, wy: 268, angle: -112, style: 'curled', bobX: -1, bobY: 2, rotAmp: 2.5, speed: 2.0 }
+        },
+        shy: {
+          left:  { cx: 96, cy: 258, wx: 168, wy: 256, angle: 82, style: 'curled', bobX: 4, bobY: 1.5, rotAmp: 6, speed: 5.5 },
+          right: { cx: 284, cy: 258, wx: 212, wy: 256, angle: -82, style: 'curled', bobX: -4, bobY: 1.5, rotAmp: 6, speed: 5.5 }
+        }
+      };
+
+      // Helper to evaluate a Quadratic Bezier point & perpendicular segment band
+      function computeBandPath(sx, sy, cx, cy, wx, wy, t, halfWidth) {
+        const mt = 1 - t;
+        const px = mt * mt * sx + 2 * mt * t * cx + t * t * wx;
+        const py = mt * mt * sy + 2 * mt * t * cy + t * t * wy;
+
+        const tx = 2 * mt * (cx - sx) + 2 * t * (wx - cx);
+        const ty = 2 * mt * (cy - sy) + 2 * t * (wy - cy);
+        const len = Math.hypot(tx, ty) || 1;
+        const ux = tx / len;
+        const uy = ty / len;
+        const nx = -uy;
+        const ny = ux;
+
+        const x1 = px - nx * halfWidth;
+        const y1 = py - ny * halfWidth;
+        const x2 = px + nx * halfWidth;
+        const y2 = py + ny * halfWidth;
+        // Slight 3D curvature along tangent
+        const qx = px + ux * 2.5;
+        const qy = py + uy * 2.5;
+
+        return `M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${qx.toFixed(1)} ${qy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+      }
+
+      // Compute natural 2D Inverse Kinematics elbow control point when dragging a hand
+      function solveDraggedArmIK(shoulder, wristX, wristY, isLeftArm) {
+        const dx = wristX - shoulder.x;
+        const dy = wristY - shoulder.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const midX = (shoulder.x + wristX) * 0.5;
+        const midY = (shoulder.y + wristY) * 0.5;
+
+        // Bend elbow outward away from torso
+        const bendAmount = Math.max(14, Math.min(48, 110 - dist * 0.45));
+        const perpX = -dy / dist;
+        const perpY = dx / dist;
+        const sign = isLeftArm ? -1 : 1;
+
+        const cx = midX + perpX * bendAmount * sign + (isLeftArm ? -10 : 10);
+        const cy = midY + Math.abs(perpY) * bendAmount * 0.6 + 8;
+
+        // Orient hand along the forearm direction from control point to wrist
+        const fdx = wristX - cx;
+        const fdy = wristY - cy;
+        const angleDeg = (Math.atan2(fdx, -fdy) * 180) / Math.PI;
+
+        return { cx, cy, wx: wristX, wy: wristY, angle: angleDeg };
+      }
+
+      // ------------------------------------------------------------------------
+      // 3. Lightweight Reusable PipAgentController (Drop-In Ready)
+      // ------------------------------------------------------------------------
+      class PipAgentController {
+        constructor(svgElement, options = {}) {
+          this.svg = svgElement;
+          this.onStateChange = options.onStateChange || (() => {});
+          this.autoLife = true;
+          this.mouthOpenVal = 0;
+          this.lipSyncTimer = null;
+          this.blinkTimer = null;
+          this.idleTimers = [];
+          this.audioRafId = null;
+
+          // Current interpolated arm states for 60fps procedural rendering
+          this.arms = {
+            left:  { cx: 70, cy: 210, wx: 68, wy: 158, angle: -24, style: 'open', dragging: false },
+            right: { cx: 296, cy: 230, wx: 306, wy: 220, angle: 76, style: 'open', dragging: false }
+          };
+
+          this.domArms = {
+            left: {
+              outline: document.getElementById('arm-left-outline'),
+              fill: document.getElementById('arm-left-fill'),
+              shine: document.getElementById('arm-left-shine'),
+              band1: document.getElementById('arm-left-band1'),
+              band2: document.getElementById('arm-left-band2'),
+              handGroup: document.getElementById('hand-left-group'),
+              openPose: document.getElementById('hand-left-open'),
+              curledPose: document.getElementById('hand-left-curled')
+            },
+            right: {
+              outline: document.getElementById('arm-right-outline'),
+              fill: document.getElementById('arm-right-fill'),
+              shine: document.getElementById('arm-right-shine'),
+              band1: document.getElementById('arm-right-band1'),
+              band2: document.getElementById('arm-right-band2'),
+              handGroup: document.getElementById('hand-right-group'),
+              openPose: document.getElementById('hand-right-open'),
+              curledPose: document.getElementById('hand-right-curled')
+            }
+          };
+
+          this._startBlinking();
+          this._resetIdleTimers();
+          this._startKinematicsLoop();
+        }
+
+        getState() {
+          return this.svg.getAttribute('data-state') || 'idle';
+        }
+
+        setState(stateId, opts = {}) {
+          const valid = BOT_STATES.some((s) => s.id === stateId);
+          if (!valid) return;
+
+          if (!opts.keepLipSync) {
+            this.stopSpeaking();
+          }
+
+          this.svg.setAttribute('data-state', stateId);
+          this.onStateChange(stateId, opts);
+
+          if (!opts.isAutoIdle) {
+            this._resetIdleTimers();
+          }
+        }
+
+        triggerPop() {
+          this.svg.classList.remove('squash-pop');
+          void this.svg.offsetWidth;
+          this.svg.classList.add('squash-pop');
+        }
+
+        setMouthOpen(amount) {
+          const clamped = Math.max(0, Math.min(1, Number(amount) || 0));
+          this.mouthOpenVal = clamped;
+          this.svg.style.setProperty('--mouth-open', clamped.toFixed(3));
+        }
+
+        setGaze(nx, ny) {
+          const maxShift = 4.2;
+          const gx = Math.max(-1, Math.min(1, nx)) * maxShift;
+          const gy = Math.max(-1, Math.min(1, ny)) * maxShift;
+          this.svg.style.setProperty('--gaze-x', `${gx.toFixed(2)}px`);
+          this.svg.style.setProperty('--gaze-y', `${gy.toFixed(2)}px`);
+        }
+
+        _startKinematicsLoop() {
+          const renderFrame = (now) => {
+            const t = now * 0.001;
+            const stateId = this.getState();
+            const poseDef = ARM_POSE_TABLE[stateId] || ARM_POSE_TABLE.idle;
+            const speechBoost = (stateId === 'talking' || stateId === 'singing') ? this.mouthOpenVal * 10 : 0;
+
+            ['left', 'right'].forEach((side, idx) => {
+              const armState = this.arms[side];
+              const target = poseDef[side];
+              const shoulder = side === 'left' ? SHOULDER_LEFT : SHOULDER_RIGHT;
+              const dom = this.domArms[side];
+
+              if (!armState.dragging) {
+                const phase = idx * 1.35;
+                const sWave = Math.sin(t * target.speed + phase);
+                const cWave = Math.cos(t * target.speed + phase);
+
+                const goalWx = target.wx + sWave * target.bobX;
+                const goalWy = target.wy + cWave * target.bobY - speechBoost * 0.8;
+                const goalCx = target.cx + sWave * (target.bobX * 0.6);
+                const goalCy = target.cy + cWave * (target.bobY * 0.6);
+                const goalAngle = target.angle + sWave * (target.rotAmp + speechBoost * 0.9);
+
+                // Smooth spring-like lerp toward target pose
+                const ease = 0.18;
+                armState.wx += (goalWx - armState.wx) * ease;
+                armState.wy += (goalWy - armState.wy) * ease;
+                armState.cx += (goalCx - armState.cx) * ease;
+                armState.cy += (goalCy - armState.cy) * ease;
+                armState.angle += (goalAngle - armState.angle) * ease;
+                armState.style = target.style;
+              }
+
+              // Update SVG Quadratic Bezier Arm Tube
+              const dTube = `M ${shoulder.x} ${shoulder.y} Q ${armState.cx.toFixed(1)} ${armState.cy.toFixed(1)} ${armState.wx.toFixed(1)} ${armState.wy.toFixed(1)}`;
+              dom.outline.setAttribute('d', dTube);
+              dom.fill.setAttribute('d', dTube);
+              dom.shine.setAttribute('d', dTube);
+
+              // Update perpendicular curved segment rings at t=0.38 and t=0.70
+              dom.band1.setAttribute(
+                'd',
+                computeBandPath(shoulder.x, shoulder.y, armState.cx, armState.cy, armState.wx, armState.wy, 0.38, 9.5)
+              );
+              dom.band2.setAttribute(
+                'd',
+                computeBandPath(shoulder.x, shoulder.y, armState.cx, armState.cy, armState.wx, armState.wy, 0.70, 9.5)
+              );
+
+              // Orient Hand Group at wrist
+              dom.handGroup.setAttribute(
+                'transform',
+                `translate(${armState.wx.toFixed(1)}, ${armState.wy.toFixed(1)}) rotate(${armState.angle.toFixed(1)})`
+              );
+
+              // Toggle between 'open' (fanned fingers) and 'curled' (chubby curled fingers)
+              const showOpen = armState.style === 'open';
+              dom.openPose.style.display = showOpen ? '' : 'none';
+              dom.curledPose.style.display = showOpen ? 'none' : '';
+            });
+
+            requestAnimationFrame(renderFrame);
+          };
+
+          requestAnimationFrame(renderFrame);
+        }
+
+        speakText(text, { mode = 'talking', onDone = null } = {}) {
+          this.stopSpeaking();
+          this.setState(mode, { keepLipSync: true, customText: text });
+
+          const clean = (text || 'Hello!').trim();
+          const durationMs = Math.min(6500, Math.max(1500, clean.length * 62));
+          const startTime = performance.now();
+
+          const tick = (now) => {
+            const elapsed = now - startTime;
+            if (elapsed >= durationMs) {
+              this.setMouthOpen(0);
+              this.lipSyncTimer = null;
+              if (typeof onDone === 'function') onDone();
+              return;
+            }
+
+            const t = elapsed / 1000;
+            const syll = Math.abs(Math.sin(t * 15.5) * Math.cos(t * 6.3));
+            const pauseGate = Math.sin(t * 3.1) > -0.78 ? 1 : 0.1;
+            this.setMouthOpen(syll * pauseGate);
+
+            this.lipSyncTimer = requestAnimationFrame(tick);
+          };
+
+          this.lipSyncTimer = requestAnimationFrame(tick);
+        }
+
+        stopSpeaking() {
+          if (this.lipSyncTimer) {
+            cancelAnimationFrame(this.lipSyncTimer);
+            this.lipSyncTimer = null;
+          }
+          if (this.audioRafId) {
+            cancelAnimationFrame(this.audioRafId);
+            this.audioRafId = null;
+          }
+          this.setMouthOpen(0);
+        }
+
+        connectAudioStream(audioContext, sourceNode, mode = 'talking') {
+          this.stopSpeaking();
+          this.setState(mode, { keepLipSync: true });
+
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          sourceNode.connect(analyser);
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+          const updateMouth = () => {
+            analyser.getByteTimeDomainData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              const v = (dataArray[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / dataArray.length);
+            const normalized = Math.min(1, rms * 5.2);
+            this.setMouthOpen(normalized);
+            this.audioRafId = requestAnimationFrame(updateMouth);
+          };
+
+          this.audioRafId = requestAnimationFrame(updateMouth);
+          return () => this.stopSpeaking();
+        }
+
+        setAutoLife(enabled) {
+          this.autoLife = Boolean(enabled);
+          if (this.autoLife) {
+            this._resetIdleTimers();
+          } else {
+            this._clearIdleTimers();
+            this.setGaze(0, 0);
+          }
+        }
+
+        _startBlinking() {
+          const scheduleBlink = () => {
+            const delay = 2400 + Math.random() * 2800;
+            this.blinkTimer = setTimeout(() => {
+              if (this.autoLife) {
+                this.svg.classList.add('is-blinking');
+                setTimeout(() => this.svg.classList.remove('is-blinking'), 140);
+              }
+              scheduleBlink();
+            }, delay);
+          };
+          scheduleBlink();
+        }
+
+        _clearIdleTimers() {
+          this.idleTimers.forEach((id) => clearTimeout(id));
+          this.idleTimers = [];
+        }
+
+        _resetIdleTimers() {
+          this._clearIdleTimers();
+          if (!this.autoLife) return;
+
+          this.idleTimers.push(
+            setTimeout(() => {
+              if (this.autoLife && !this.lipSyncTimer) {
+                this.setState('waiting', { isAutoIdle: true });
+              }
+            }, 14000),
+            setTimeout(() => {
+              if (this.autoLife && !this.lipSyncTimer) {
+                this.setState('tired', { isAutoIdle: true });
+              }
+            }, 24000),
+            setTimeout(() => {
+              if (this.autoLife && !this.lipSyncTimer) {
+                this.setState('sleeping', { isAutoIdle: true });
+              }
+            }, 34000)
+          );
+        }
+      }
+
+      // ------------------------------------------------------------------------
+      // 4. Optional Cute Web Audio Synthesizer & UI Helpers
+      // ------------------------------------------------------------------------
+      class CuteSynthesizer {
+        constructor() {
+          this.enabled = false;
+          this.ctx = null;
+        }
+
+        toggle() {
+          this.enabled = !this.enabled;
+          if (this.enabled && !this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) this.ctx = new AudioCtx();
+          }
+          if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume();
+          }
+          return this.enabled;
+        }
+
+        playStateChirp(stateId) {
+          if (!this.enabled || !this.ctx) return;
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          const tones = {
+            happy: [523.25, 659.25, 783.99],
+            giggle: [659.25, 783.99, 987.77],
+            celebrating: [523.25, 659.25, 783.99, 1046.5],
+            sad: [392.0, 349.23, 311.13],
+            angry: [196.0, 185.0],
+            jump_scared: [880.0, 440.0],
+            sleeping: [329.63, 261.63],
+            shy: [493.88, 587.33]
+          };
+
+          const notes = tones[stateId] || [440, 554.37];
+          osc.type = stateId === 'angry' ? 'sawtooth' : 'sine';
+
+          notes.forEach((freq, i) => {
+            osc.frequency.setValueAtTime(freq, now + i * 0.065);
+          });
+
+          const totalDur = notes.length * 0.065 + 0.08;
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + totalDur);
+
+          osc.start(now);
+          osc.stop(now + totalDur);
+        }
+      }
+
+      const synth = new CuteSynthesizer();
+      const svgEl = document.getElementById('pip-bot-svg');
+      const activeBadgeEl = document.getElementById('active-state-badge');
+      const speechBubbleEl = document.getElementById('bot-speech-bubble');
+      const particlesLayer = document.getElementById('tap-particles-layer');
+      const stageWrapper = document.getElementById('svg-stage-wrapper');
+
+      let speechHideTimer = null;
+      let pipelineTimers = [];
+
+      function showSpeechBubble(text, duration = 3600) {
+        if (!speechBubbleEl) return;
+        speechBubbleEl.textContent = text;
+        speechBubbleEl.classList.remove('opacity-0', '-translate-y-1');
+        speechBubbleEl.classList.add('opacity-100', 'translate-y-0');
+
+        if (speechHideTimer) clearTimeout(speechHideTimer);
+        speechHideTimer = setTimeout(() => {
+          speechBubbleEl.classList.remove('opacity-100', 'translate-y-0');
+          speechBubbleEl.classList.add('opacity-0', '-translate-y-1');
+        }, duration);
+      }
+
+      function spawnParticleBurst(emojis, clientX, clientY) {
+        if (!particlesLayer) return;
+        const rect = particlesLayer.getBoundingClientRect();
+        const originX = clientX ? clientX - rect.left : rect.width / 2;
+        const originY = clientY ? clientY - rect.top : rect.height / 2;
+
+        for (let i = 0; i < 5; i++) {
+          const span = document.createElement('span');
+          span.textContent = emojis[i % emojis.length];
+          span.className = 'absolute text-base select-none pointer-events-none transition-all duration-700 ease-out';
+          span.style.left = `${originX}px`;
+          span.style.top = `${originY}px`;
+          span.style.transform = 'translate(-50%, -50%) scale(0.5)';
+          span.style.opacity = '1';
+          particlesLayer.appendChild(span);
+
+          const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2 + (Math.random() - 0.5) * 0.5;
+          const dist = 36 + Math.random() * 34;
+          const tx = Math.cos(angle) * dist;
+          const ty = Math.sin(angle) * dist - 18;
+
+          requestAnimationFrame(() => {
+            span.style.transform = `translate(calc(-50% + ${tx.toFixed(1)}px), calc(-50% + ${ty.toFixed(1)}px)) scale(1.15)`;
+            span.style.opacity = '0';
+          });
+
+          setTimeout(() => span.remove(), 720);
+        }
+      }
+
+      function clearPipelineTimers() {
+        pipelineTimers.forEach((id) => clearTimeout(id));
+        pipelineTimers = [];
+      }
+
+      // Initialize PipAgentController before attaching interactive listeners
+      const pipController = new PipAgentController(svgEl, {
+        onStateChange(stateId, opts) {
+          const meta = BOT_STATES.find((s) => s.id === stateId);
+          activeBadgeEl.textContent = meta ? meta.label : stateId.replace('_', ' ');
+
+          document.querySelectorAll('.state-btn').forEach((btn) => {
+            const isMatch = btn.dataset.state === stateId;
+            btn.classList.toggle('ring-2', isMatch);
+            btn.classList.toggle('ring-indigo-500', isMatch);
+            btn.classList.toggle('bg-indigo-50', isMatch);
+            btn.classList.toggle('border-indigo-300', isMatch);
+            btn.classList.toggle('bg-slate-50/80', !isMatch);
+            btn.classList.toggle('border-slate-200/80', !isMatch);
+          });
+
+          document.querySelectorAll('.pipeline-pill').forEach((pill) => {
+            const active = pill.dataset.step === stateId;
+            pill.classList.toggle('bg-indigo-600', active);
+            pill.classList.toggle('text-white', active);
+            pill.classList.toggle('border-indigo-600', active);
+            pill.classList.toggle('shadow-xs', active);
+            pill.classList.toggle('bg-slate-100', !active);
+            pill.classList.toggle('text-slate-500', !active);
+          });
+
+          const message = opts.customText || (meta && meta.quote);
+          if (message) {
+            showSpeechBubble(message, stateId === 'talking' ? 5200 : 3800);
+          }
+
+          if (!opts.isAutoIdle) {
+            synth.playStateChirp(stateId);
+          }
+        }
+      });
+
+      // Populate 20-State Selector Grids
+      function renderStateButtons() {
+        const grids = {
+          agent: document.getElementById('grid-agent'),
+          emotions: document.getElementById('grid-emotions'),
+          learning: document.getElementById('grid-learning')
+        };
+
+        BOT_STATES.forEach((st) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.state = st.id;
+          btn.className = 'state-btn min-h-[54px] p-2.5 rounded-2xl border border-slate-200/80 bg-slate-50/80 hover:bg-indigo-50/70 hover:border-indigo-200 transition-all flex flex-col items-center justify-center gap-1 text-center active:scale-95';
+          btn.innerHTML = `
+            <span class="text-xl leading-none">${st.emoji}</span>
+            <span class="text-xs font-semibold text-slate-700 leading-tight">${st.label}</span>
+          `;
+
+          btn.addEventListener('click', () => {
+            clearPipelineTimers();
+            pipController.triggerPop();
+            if (st.id === 'talking' || st.id === 'singing') {
+              pipController.speakText(st.quote, { mode: st.id });
+            } else {
+              pipController.setState(st.id);
+            }
+          });
+
+          if (grids[st.category]) {
+            grids[st.category].appendChild(btn);
+          }
+        });
+      }
+
+      renderStateButtons();
+      pipController.setState('happy', { isAutoIdle: true });
+
+      // ------------------------------------------------------------------------
+      // 5. Interactive Body Hotspot Touch / Click & Grab-and-Drag Hand IK
+      // ------------------------------------------------------------------------
+      const hotspotReactions = {
+        antenna: {
+          states: ['jump_scared', 'curious', 'celebrating', 'storytelling'],
+          particles: ['⭐', '⚡', '✨']
+        },
+        face: {
+          states: ['giggle', 'happy', 'proud', 'shy', 'curious'],
+          particles: ['💖', '😊', '✨']
+        },
+        arm_right: {
+          states: ['happy', 'celebrating', 'giggle', 'shy'],
+          particles: ['👋', '🌟', '🎉']
+        },
+        arm_left: {
+          states: ['happy', 'singing', 'proud', 'teaching'],
+          particles: ['🙌', '🎵', '✨']
+        },
+        chest: {
+          states: ['proud', 'happy', 'giggle', 'shy'],
+          particles: ['💛', '⚙️', '💕']
+        }
+      };
+
+      const botWholeEl = document.getElementById('bot-whole');
+      let activeDragSide = null;
+      let dragMovedDistance = 0;
+      let dragStartClient = { x: 0, y: 0 };
+
+      function clientToBotWholeCoords(clientX, clientY) {
+        const pt = svgEl.createSVGPoint();
+        pt.x = clientX;
+        pt.y = clientY;
+        const ctm = botWholeEl.getScreenCTM();
+        if (!ctm) return { x: 190, y: 220 };
+        return pt.matrixTransform(ctm.inverse());
+      }
+
+      ['left', 'right'].forEach((side) => {
+        const handEl = pipController.domArms[side].handGroup;
+        handEl.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+          clearPipelineTimers();
+          activeDragSide = side;
+          dragMovedDistance = 0;
+          dragStartClient = { x: e.clientX, y: e.clientY };
+          pipController.arms[side].dragging = true;
+          pipController.arms[side].style = 'open';
+          handEl.setPointerCapture(e.pointerId);
+          showSpeechBubble("Wheee! You're moving my hand! ✋✨", 3000);
+        });
+      });
+
+      window.addEventListener('pointermove', (e) => {
+        if (activeDragSide) {
+          const moved = Math.hypot(e.clientX - dragStartClient.x, e.clientY - dragStartClient.y);
+          dragMovedDistance = Math.max(dragMovedDistance, moved);
+
+          const localPt = clientToBotWholeCoords(e.clientX, e.clientY);
+          const shoulder = activeDragSide === 'left' ? SHOULDER_LEFT : SHOULDER_RIGHT;
+
+          const dx = localPt.x - shoulder.x;
+          const dy = localPt.y - shoulder.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const maxReach = 118;
+          const clampedX = dist > maxReach ? shoulder.x + (dx / dist) * maxReach : localPt.x;
+          const clampedY = dist > maxReach ? shoulder.y + (dy / dist) * maxReach : localPt.y;
+
+          const ik = solveDraggedArmIK(shoulder, clampedX, clampedY, activeDragSide === 'left');
+          const arm = pipController.arms[activeDragSide];
+          arm.wx = ik.wx;
+          arm.wy = ik.wy;
+          arm.cx = ik.cx;
+          arm.cy = ik.cy;
+          arm.angle = ik.angle;
+
+          const nx = (clampedX - 190) / 110;
+          const ny = (clampedY - 134) / 110;
+          pipController.setGaze(nx, ny);
+          return;
+        }
+
+        if (!pipController.autoLife) return;
+        const rect = svgEl.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height * 0.36;
+        const nx = (e.clientX - cx) / (window.innerWidth * 0.45);
+        const ny = (e.clientY - cy) / (window.innerHeight * 0.45);
+        pipController.setGaze(nx, ny);
+      });
+
+      window.addEventListener('pointerup', (e) => {
+        if (!activeDragSide) return;
+        const releasedSide = activeDragSide;
+        pipController.arms[releasedSide].dragging = false;
+        activeDragSide = null;
+
+        pipController.triggerPop();
+        spawnParticleBurst(['✋', '✨', '🤭'], e.clientX, e.clientY);
+
+        if (dragMovedDistance > 12) {
+          const reaction = Math.random() > 0.35 ? 'giggle' : 'happy';
+          pipController.setState(reaction, {
+            customText: reaction === 'giggle'
+              ? 'Hehehe! My stretchy robot arm bounced right back!'
+              : 'High-five, friend! 👋✨'
+          });
+        } else {
+          const zone = releasedSide === 'left' ? 'arm_right' : 'arm_left';
+          const config = hotspotReactions[zone];
+          const nextState = config.states[Math.floor(Math.random() * config.states.length)];
+          pipController.setState(nextState);
+        }
+      });
+
+      svgEl.addEventListener('click', (e) => {
+        if (dragMovedDistance > 8) {
+          dragMovedDistance = 0;
+          return;
+        }
+        clearPipelineTimers();
+        pipController.triggerPop();
+
+        const hotspotEl = e.target.closest('.bot-hotspot');
+        const zone = hotspotEl ? hotspotEl.dataset.hotspot : 'face';
+        const config = hotspotReactions[zone] || hotspotReactions.face;
+
+        const current = pipController.getState();
+        const candidates = config.states.filter((s) => s !== current);
+        const chosen = candidates[Math.floor(Math.random() * candidates.length)] || config.states[0];
+
+        spawnParticleBurst(config.particles, e.clientX, e.clientY);
+
+        if (chosen === 'singing') {
+          const meta = BOT_STATES.find((s) => s.id === 'singing');
+          pipController.speakText(meta.quote, { mode: 'singing' });
+        } else {
+          pipController.setState(chosen);
+        }
+      });
+
+      // Manual Lip-Sync (--mouth-open) Slider
+      const mouthSlider = document.getElementById('mouth-open-slider');
+      const mouthValLabel = document.getElementById('mouth-open-val');
+      if (mouthSlider) {
+        mouthSlider.addEventListener('input', (e) => {
+          clearPipelineTimers();
+          const val = parseFloat(e.target.value) || 0;
+          mouthValLabel.textContent = val.toFixed(2);
+          if (pipController.getState() !== 'talking' && pipController.getState() !== 'singing') {
+            pipController.setState('talking', { keepLipSync: true, customText: 'Move the slider to test real-time AI voice lip-sync!' });
+          }
+          pipController.setMouthOpen(val);
+        });
+      }
+
+      // ------------------------------------------------------------------------
+      // 6. AI Agent Pipeline Simulator & Custom Speak Controls
+      // ------------------------------------------------------------------------
+      document.getElementById('btn-run-pipeline').addEventListener('click', () => {
+        clearPipelineTimers();
+        pipController.triggerPop();
+
+        // Step 1: Listening
+        pipController.setState('listening', { customText: '👂 Listening to your question...' });
+
+        // Step 2: Thinking
+        pipelineTimers.push(
+          setTimeout(() => {
+            pipController.setState('thinking', { customText: '🤔 Searching my star-powered brain...' });
+          }, 1800)
+        );
+
+        // Step 3: Talking with live syllable lip-sync
+        pipelineTimers.push(
+          setTimeout(() => {
+            const answer = "A rainbow appears when sunlight shines through tiny raindrops in the sky!";
+            pipController.speakText(answer, {
+              mode: 'talking',
+              onDone: () => {
+                // Step 4: Celebrating
+                pipController.triggerPop();
+                pipController.setState('celebrating', { customText: '🎉 Awesome question! Want to ask another?' });
+              }
+            });
+          }, 3600)
+        );
+      });
+
+      document.getElementById('speak-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        clearPipelineTimers();
+        const input = document.getElementById('speak-input');
+        const phrase = input.value.trim() || "Hello! I'm Pip, your friendly AI learning buddy!";
+        pipController.triggerPop();
+        pipController.speakText(phrase, {
+          mode: 'talking',
+          onDone: () => pipController.setState('happy')
+        });
+      });
+
+      // Random Action Button
+      document.getElementById('btn-random-state').addEventListener('click', () => {
+        clearPipelineTimers();
+        const current = pipController.getState();
+        const others = BOT_STATES.filter((s) => s.id !== current);
+        const pick = others[Math.floor(Math.random() * others.length)];
+        pipController.triggerPop();
+        if (pick.id === 'talking' || pick.id === 'singing') {
+          pipController.speakText(pick.quote, { mode: pick.id });
+        } else {
+          pipController.setState(pick.id);
+        }
+      });
+
+      // Responsive Scale Preview Buttons (64px, 140px, Hero 280px)
+      document.querySelectorAll('.size-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const size = Number(btn.dataset.size) || 280;
+          stageWrapper.style.width = `${size}px`;
+          stageWrapper.style.height = `${size}px`;
+
+          document.querySelectorAll('.size-btn').forEach((b) => {
+            const active = b === btn;
+            b.classList.toggle('bg-indigo-600', active);
+            b.classList.toggle('text-white', active);
+            b.classList.toggle('shadow-xs', active);
+            b.classList.toggle('text-slate-500', !active);
+          });
+        });
+      });
+
+      // Sound Toggle
+      document.getElementById('btn-sound-toggle').addEventListener('click', () => {
+        const isOn = synth.toggle();
+        document.getElementById('sound-icon').textContent = isOn ? '🔊' : '🔇';
+        document.getElementById('sound-label').textContent = isOn ? 'On' : 'Off';
+        if (isOn) synth.playStateChirp('happy');
+      });
+
+      // Auto-Life Toggle
+      document.getElementById('btn-autoidle-toggle').addEventListener('click', (e) => {
+        const next = !pipController.autoLife;
+        pipController.setAutoLife(next);
+        document.getElementById('autoidle-label').textContent = next ? 'On' : 'Off';
+        const btn = e.currentTarget;
+        btn.classList.toggle('bg-indigo-50', next);
+        btn.classList.toggle('text-indigo-700', next);
+        btn.classList.toggle('border-indigo-200', next);
+        btn.classList.toggle('bg-white', !next);
+        btn.classList.toggle('text-slate-600', !next);
+        btn.classList.toggle('border-slate-200', !next);
+      });
+
+      // ------------------------------------------------------------------------
+      // 7. Export Modal & Clipboard Copy Helper
+      // ------------------------------------------------------------------------
+      const exportModal = document.getElementById('export-modal');
+      const exportCodeOutput = document.getElementById('export-code-output');
+      let currentExportTab = 'svg';
+
+      function getStandaloneSvgSnippet() {
+        const styleTag = document.querySelector('style').innerHTML.trim();
+        const svgMarkup = svgEl.outerHTML.trim();
+        return `<!-- Pip AI Bot Mascot (19 States • Dual-Hand Foreground Z-Order) -->\n<style>\n${styleTag}\n</style>\n\n${svgMarkup}`;
+      }
+
+      function getAgentBridgeSnippet() {
+        return `// Lightweight AI Agent & Web Audio Lip-Sync Controller for Pip (#pip-bot-svg)
+class PipAgentController {
+  constructor(svgSelector = '#pip-bot-svg') {
+    this.svg = typeof svgSelector === 'string' ? document.querySelector(svgSelector) : svgSelector;
+    this.rafId = null;
+  }
+
+  // Switch between any of the 19 states:
+  // 'idle', 'listening', 'thinking', 'talking', 'singing', 'happy', 'giggle',
+  // 'sad', 'angry', 'tired', 'sleeping', 'waiting', 'jump_scared', 'curious',
+  // 'proud', 'teaching', 'reading', 'storytelling', 'celebrating'
+  setState(state) {
+    this.stopAudioSync();
+    this.svg.setAttribute('data-state', state);
+  }
+
+  // Set mouth openness (0.0 to 1.0) directly from TTS visemes or audio amplitude
+  setMouthOpen(value) {
+    const v = Math.max(0, Math.min(1, value));
+    this.svg.style.setProperty('--mouth-open', v.toFixed(3));
+  }
+
+  // Wire directly to a Web Audio API AudioNode (TTS stream or microphone)
+  connectAudioNode(audioContext, sourceNode, mode = 'talking') {
+    this.setState(mode);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    sourceNode.connect(analyser);
+    const buffer = new Uint8Array(analyser.frequencyBinCount);
+
+    const loop = () => {
+      analyser.getByteTimeDomainData(buffer);
+      let sum = 0;
+      for (let i = 0; i < buffer.length; i++) {
+        const sample = (buffer[i] - 128) / 128;
+        sum += sample * sample;
+      }
+      const rms = Math.sqrt(sum / buffer.length);
+      this.setMouthOpen(Math.min(1, rms * 5.2));
+      this.rafId = requestAnimationFrame(loop);
+    };
+
+    this.rafId = requestAnimationFrame(loop);
+    return () => this.stopAudioSync();
+  }
+
+  stopAudioSync() {
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+    this.setMouthOpen(0);
+  }
+}
+
+// Example Usage with an AI Voice Agent:
+// const pip = new PipAgentController('#pip-bot-svg');
+// pip.setState('listening'); // Child speaks
+// pip.setState('thinking');  // LLM generates response
+// const disconnect = pip.connectAudioNode(audioCtx, ttsSourceNode, 'talking');
+// ttsAudio.onended = () => { disconnect(); pip.setState('celebrating'); };`;
+      }
+
+      function updateExportView(tab) {
+        currentExportTab = tab;
+        document.querySelectorAll('.export-tab').forEach((t) => {
+          const active = t.dataset.tab === tab;
+          t.classList.toggle('bg-slate-900', active);
+          t.classList.toggle('text-white', active);
+          t.classList.toggle('bg-slate-200/70', !active);
+          t.classList.toggle('text-slate-600', !active);
+        });
+        exportCodeOutput.textContent = tab === 'svg' ? getStandaloneSvgSnippet() : getAgentBridgeSnippet();
+      }
+
+      document.getElementById('btn-open-export').addEventListener('click', () => {
+        updateExportView(currentExportTab);
+        exportModal.classList.remove('hidden');
+        exportModal.classList.add('flex');
+      });
+
+      document.getElementById('btn-close-export').addEventListener('click', () => {
+        exportModal.classList.add('hidden');
+        exportModal.classList.remove('flex');
+      });
+
+      exportModal.addEventListener('click', (e) => {
+        if (e.target === exportModal) {
+          exportModal.classList.add('hidden');
+          exportModal.classList.remove('flex');
+        }
+      });
+
+      document.querySelectorAll('.export-tab').forEach((tabBtn) => {
+        tabBtn.addEventListener('click', () => updateExportView(tabBtn.dataset.tab));
+      });
+
+      function showToast(msg, icon = '✨') {
+        const banner = document.getElementById('toast-banner');
+        document.getElementById('toast-text').textContent = msg;
+        document.getElementById('toast-icon').textContent = icon;
+        banner.classList.remove('opacity-0', 'translate-y-3');
+        banner.classList.add('opacity-100', 'translate-y-0');
+        setTimeout(() => {
+          banner.classList.add('opacity-0', 'translate-y-3');
+          banner.classList.remove('opacity-100', 'translate-y-0');
+        }, 2600);
+      }
+
+      document.getElementById('btn-copy-code').addEventListener('click', () => {
+        const text = exportCodeOutput.textContent;
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          showToast(
+            currentExportTab === 'svg'
+              ? 'Copied standalone SVG + CSS!'
+              : 'Copied PipAgentController JS!',
+            '📋'
+          );
+        } catch (_) {
+          showToast('Select and copy the code from the box above.', 'ℹ️');
+        }
+        document.body.removeChild(textarea);
+      });
+    })();
+  </script>
+</body>
+</html>

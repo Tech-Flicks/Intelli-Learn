@@ -213,13 +213,22 @@ export async function updateChild(id: string, patch: Partial<ChildProfile>): Pro
   });
 }
 
-/** Removes the profile and every record about the child, in one transaction. */
+/**
+ * Removes the profile and every record about the child, in one transaction:
+ * all rows in `CHILD_TABLES`, and the child's id in the "seen by" lists of the
+ * shared canvas library (the canvases themselves stay for the other children).
+ */
 export async function deleteChild(id: string): Promise<void> {
   const tables = CHILD_TABLES.map((name) => db.table(name));
-  await db.transaction('rw', [db.children, ...tables], async () => {
+  await db.transaction('rw', [db.children, db.library, ...tables], async () => {
     for (const table of tables) {
       await table.where('childId').equals(id).delete();
     }
+    await db.library
+      .filter((item) => item.seenBy.includes(id))
+      .modify((item) => {
+        item.seenBy = item.seenBy.filter((seenBy) => seenBy !== id);
+      });
     await db.children.delete(id);
   });
 }
