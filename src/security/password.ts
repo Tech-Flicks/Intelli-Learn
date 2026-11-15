@@ -7,15 +7,20 @@
  * Lockout: every 5th wrong attempt in a row locks the gate. The first lock
  * lasts 30 s and each further one doubles (60 s, 2 min, ...) up to 15 min.
  * While locked, attempts are refused without being checked, even with the
- * right password. A correct password clears the counters.
+ * right password. A correct password clears the counters, drops a pending
+ * forgotten-password reset (see recovery.ts) and, when the stored hash was made
+ * with fewer rounds than today's count, stores a stronger one.
  */
 import type { AdminAuth, Settings } from '@/core/types';
-import { getSettings, updateSettings } from '@/data';
+import { db, getSettings, updateSettings } from '@/data';
 import { base64ToBytes, bytesToBase64, constantTimeEqual, randomBytes, requireCrypto } from './encoding';
 
 export const PASSWORD_MIN_LENGTH = 6;
 export const PASSWORD_MAX_LENGTH = 128;
-export const PBKDF2_ITERATIONS = 210_000;
+/** The OWASP figure for PBKDF2-HMAC-SHA256 (210,000 is the one for SHA-512). */
+export const PBKDF2_ITERATIONS = 600_000;
+/** `db.kv` key of a pending forgotten-password reset (recovery.ts owns the record). */
+export const RESET_REQUEST_KEY = 'security:reset-request';
 export const MAX_FAILED_ATTEMPTS = 5;
 export const LOCKOUT_BASE_MS = 30_000;
 export const LOCKOUT_MAX_MS = 15 * 60_000;
@@ -133,6 +138,22 @@ async function matches(password: string, auth: AdminAuth): Promise<boolean> {
   }
 }
 
+/**
+ * A new salt and hash at today's iteration count when the stored one used fewer rounds, else
+ * nothing. Never throws: a failed upgrade must not turn a right password into a refusal.
+ */
+async function strongerHash(password: string, auth: AdminAuth): Promise<Pick<AdminAuth, 'salt' | 'hash' | 'iterations'> | null> {
+  const iterations = effectiveIterations(auth.iterations);
+  if (!Number.isInteger(auth.iterations) || auth.iterations >= iterations) return null;
+  try {
+    const salt = randomBytes(SALT_BYTES);
+    const hash = await derive(password, salt, iterations);
+    return { salt: bytesToBase64(salt), hash: bytesToBase64(hash), iterations };
+  } catch {
+    return null;
+  }
+}
+
 async function verifyNow(password: string, now: number): Promise<VerifyResult> {
   const auth = (await getSettings()).auth;
   if (!auth) return { ok: false, lockedUntil: null, attemptsLeft: MAX_FAILED_ATTEMPTS };
@@ -146,9 +167,15 @@ async function verifyNow(password: string, now: number): Promise<VerifyResult> {
     current.auth !== null && current.auth.hash === auth.hash && current.auth.salt === auth.salt;
 
   if (ok) {
+    // A hash from an older version (fewer rounds) is replaced now, while the password is at hand.
+    const stronger = await strongerHash(password, auth);
     await updateSettings((current) =>
-      samePassword(current) ? { ...current, auth: { ...current.auth, failedAttempts: 0, lockedUntil: null } } : current,
+      samePassword(current)
+        ? { ...current, auth: { ...current.auth, ...stronger, failedAttempts: 0, lockedUntil: null } }
+        : current,
     );
+    // Whoever knows the password does not need the forgotten-password reset.
+    await db.kv.delete(RESET_REQUEST_KEY).catch(() => undefined);
     return { ok: true, lockedUntil: null, attemptsLeft: MAX_FAILED_ATTEMPTS };
   }
 

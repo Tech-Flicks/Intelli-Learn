@@ -70,13 +70,14 @@ describe('lockoutDurationMs', () => {
 });
 
 describe('setAdminPassword', () => {
-  it('stores a salted PBKDF2 hash with 210 000 iterations, never the password', async () => {
+  it('stores a salted PBKDF2 hash with 600 000 iterations, never the password', async () => {
     await setAdminPassword('open sesame');
 
     const auth = (await getSettings()).auth;
     expect(auth).not.toBeNull();
     expect(auth?.iterations).toBe(PBKDF2_ITERATIONS);
-    expect(PBKDF2_ITERATIONS).toBeGreaterThanOrEqual(210_000);
+    // 600,000 is the OWASP figure for PBKDF2-HMAC-SHA256; 210,000 belongs to SHA-512.
+    expect(PBKDF2_ITERATIONS).toBeGreaterThanOrEqual(600_000);
     expect(atob(auth?.salt ?? '')).toHaveLength(16);
     expect(atob(auth?.hash ?? '')).toHaveLength(32);
     expect(auth?.failedAttempts).toBe(0);
@@ -255,6 +256,29 @@ describe('verifyAdminPassword', () => {
   it('does not throw for a value that is not a string', async () => {
     await setAdminPassword('open sesame', FAST);
     await expect(verifyAdminPassword(undefined as unknown as string, T0)).resolves.toMatchObject({ ok: false });
+  });
+
+  it('replaces a hash made with fewer rounds once the right password is entered', async () => {
+    // A record as an older version stored it (the test build honours the low count).
+    await setAdminPassword('open sesame', { iterations: 2000 });
+    const old = (await getSettings()).auth;
+    expect(old?.iterations).toBe(2000);
+
+    vi.stubEnv('MODE', 'production');
+    expect((await verifyAdminPassword('wrong-password', T0)).ok).toBe(false);
+    expect((await getSettings()).auth?.iterations).toBe(2000);
+
+    expect((await verifyAdminPassword('open sesame', T0)).ok).toBe(true);
+    const upgraded = (await getSettings()).auth;
+    expect(upgraded?.iterations).toBe(PBKDF2_ITERATIONS);
+    expect(upgraded?.salt).not.toBe(old?.salt);
+    expect(upgraded?.hash).not.toBe(old?.hash);
+    expect(upgraded?.failedAttempts).toBe(0);
+
+    // The same password still opens the gate, and the record is left alone from now on.
+    expect((await verifyAdminPassword('open sesame', T0)).ok).toBe(true);
+    expect((await getSettings()).auth?.hash).toBe(upgraded?.hash);
+    expect((await verifyAdminPassword('guess', T0)).ok).toBe(false);
   });
 });
 

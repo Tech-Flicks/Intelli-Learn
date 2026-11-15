@@ -24,3 +24,14 @@ export { useParentGate, PARENT_IDLE_LOCK_MS, PARENT_HIDDEN_LOCK_MS } from './gat
 export type { ParentGateState } from './gate';
 
 export { cryptoAvailable, INSECURE_CONTEXT_MESSAGE } from './encoding';
+
+export {
+  requestReset,
+  getResetRequest,
+  cancelResetRequest,
+  resetIsReady,
+  resetAllowed,
+  RESET_WAIT_MS,
+  RESET_REQUEST_KEY,
+} from './recovery';
+export type { ResetRequest, ResetRequestResult } from './recovery';
