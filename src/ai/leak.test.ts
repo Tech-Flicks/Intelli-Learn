@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ChallengeSchema } from '@/core/schemas';
+import { makeStage } from '@/core/grades';
+import { ChallengeSchema, type Challenge } from '@/core/schemas';
+import { SKILLS, skillGrades } from '@/core/skills';
+import type { ChallengePlan } from '@/core/types';
+import { CURATED, pickOfflineChallenge } from '@/offline';
+import { SAMPLE_CHALLENGES } from '@/engine';
 import { mentionsNumber, revealsAnswer } from './leak';
 import { KIND_EXAMPLES } from './prompts';
 
@@ -64,11 +69,81 @@ describe('revealsAnswer', () => {
     expect(revealsAnswer(numeric, 'Make three equal piles from the twelve cookies.', 'en')).toBe(false);
   });
 
-  it('never flags kinds whose answer cannot be said in a word', () => {
-    for (const kind of ['tap', 'sort', 'match', 'order', 'robot', 'build'] as const) {
+  it('never flags kinds whose answer cannot be said in words', () => {
+    for (const kind of ['tap', 'robot', 'build'] as const) {
       const challenge = ChallengeSchema.parse(KIND_EXAMPLES[kind]);
       expect(revealsAnswer(challenge, `${challenge.explanation} ${challenge.walkthrough.join(' ')}`, 'en')).toBe(false);
     }
+  });
+
+  it('flags an order answer that lists the items in the order of the key', () => {
+    const order = ChallengeSchema.parse(SAMPLE_CHALLENGES.order); // Seed, Sprout, Leafy plant, Flower
+    expect(revealsAnswer(order, 'Here you go: "Seed", then "Sprout", then "Leafy plant", then "Flower"', 'en')).toBe(true);
+    expect(revealsAnswer(order, 'First the seed, next the sprout and after that the leafy plant.', 'en')).toBe(true);
+    expect(revealsAnswer(order, order.explanation, 'en')).toBe(true);
+    // Help that points at one step, or compares two, is not the answer.
+    for (const hint of order.hints) expect(revealsAnswer(order, hint, 'en'), hint).toBe(false);
+    expect(revealsAnswer(order, 'A sprout comes after the seed.', 'en')).toBe(false);
+    expect(revealsAnswer(order, 'Think about the flower, the seed and the sprout: which is the youngest?', 'en')).toBe(false);
+    expect(revealsAnswer(order, order.walkthrough[0] ?? '', 'en')).toBe(false);
+  });
+
+  it('flags a sort answer that puts things in their groups', () => {
+    const sort = ChallengeSchema.parse(SAMPLE_CHALLENGES.sort);
+    expect(revealsAnswer(sort, '"Rubber duck" goes in "Floats"; "Rock" goes in "Sinks"; "Leaf" goes in "Floats"', 'en')).toBe(true);
+    expect(revealsAnswer(sort, 'The rock sinks. The key sinks too.', 'en')).toBe(true);
+    for (const text of [...sort.hints, ...sort.walkthrough, sort.explanation]) expect(revealsAnswer(sort, text, 'en'), text).toBe(false);
+    expect(revealsAnswer(sort, 'Does the rock belong with Floats or with Sinks? What about the key: Floats or Sinks?', 'en')).toBe(false);
+    expect(revealsAnswer(sort, 'Look at the rubber duck and the rock. Which one is heavy for its size?', 'en')).toBe(false);
+  });
+
+  it('flags a match answer that names pairs', () => {
+    const match = ChallengeSchema.parse(SAMPLE_CHALLENGES.match);
+    expect(revealsAnswer(match, '"Bee" with "Hive"; "Bird" with "Nest"; "Fish" with "Pond"', 'en')).toBe(true);
+    expect(revealsAnswer(match, 'The bee goes to the hive and the bird goes to the nest.', 'en')).toBe(true);
+    for (const hint of match.hints) expect(revealsAnswer(match, hint, 'en'), hint).toBe(false);
+    expect(revealsAnswer(match, 'Where would you look for a bee: a hive, a nest or a pond?', 'en')).toBe(false);
+    expect(revealsAnswer(match, 'Think about the bee and the bird. Which of them can swim?', 'en')).toBe(false);
+  });
+
+  it('flags the answer 1 when it is given as the word, but not every "one"', () => {
+    const one = ChallengeSchema.parse({ ...(KIND_EXAMPLES.number as object), interaction: { kind: 'number', answer: 1, min: 0, max: 10 } });
+    expect(revealsAnswer(one, 'The answer is one.', 'en')).toBe(true);
+    expect(revealsAnswer(one, 'There is only one left!', 'en')).toBe(true);
+    expect(revealsAnswer(one, 'It is 1.', 'en')).toBe(true);
+    expect(revealsAnswer(one, 'Try one more time and look at each one.', 'en')).toBe(false);
+    expect(revealsAnswer(one, 'This is one way to count them. Which one is left over?', 'en')).toBe(false);
+  });
+
+  it('flags compound number words', () => {
+    expect(mentionsNumber('It is twenty-one.', 21, 'en')).toBe(true);
+    expect(mentionsNumber('That makes twenty one cookies.', 21, 'en')).toBe(true);
+    expect(mentionsNumber('Ninety-nine!', 99, 'en')).toBe(true);
+    expect(mentionsNumber('Son veintiuno.', 21, 'es')).toBe(true);
+    expect(mentionsNumber('Son treinta y dos.', 32, 'es')).toBe(true);
+    expect(mentionsNumber('Count on from twenty.', 21, 'en')).toBe(false);
+    expect(mentionsNumber('One cookie for each of the twenty children.', 21, 'en')).toBe(false);
+  });
+
+  it('flags a short correct label when the text presents it as the answer', () => {
+    const animals = ChallengeSchema.parse({
+      ...(KIND_EXAMPLES.choice as object),
+      interaction: {
+        kind: 'choice',
+        options: [
+          { id: 'a', label: 'Cat' },
+          { id: 'b', label: 'Dog', misconception: 'A dog barks.' },
+          { id: 'c', label: 'Cow', misconception: 'A cow moos.' },
+        ],
+        correctIds: ['a'],
+      },
+    });
+    expect(revealsAnswer(animals, 'The answer is cat.', 'en')).toBe(true);
+    expect(revealsAnswer(animals, 'Pick the cat!', 'en')).toBe(true);
+    expect(revealsAnswer(animals, "It's the cat.", 'en')).toBe(true);
+    expect(revealsAnswer(animals, 'Which one purrs: a cat, a dog or a cow?', 'en')).toBe(false);
+    expect(revealsAnswer(animals, 'Think about which animal says meow.', 'en')).toBe(false);
+    expect(revealsAnswer(animals, 'A cat is a pet. So is one of the others.', 'en')).toBe(false);
   });
 
   it('the prompt examples do not give their own answers away in the hints', () => {
@@ -77,4 +152,35 @@ describe('revealsAnswer', () => {
       for (const hint of challenge.hints) expect(revealsAnswer(challenge, hint, 'en'), hint).toBe(false);
     }
   });
+
+  it('does not hold the built-in hints of order, sort and match challenges against them', () => {
+    const flagged: string[] = [];
+    const seen = (challenge: Challenge, where: string): void => {
+      if (!['order', 'sort', 'match'].includes(challenge.interaction.kind)) return;
+      for (const hint of challenge.hints) {
+        if (revealsAnswer(challenge, hint, 'en')) flagged.push(`${where}: ${challenge.title} -> ${hint}`);
+      }
+    };
+    for (const item of CURATED) seen(item.challenge, `curated ${item.id}`);
+    for (const skill of SKILLS) {
+      for (const grade of skillGrades(skill)) {
+        for (const interaction of skill.interactions) {
+          for (const seed of [1, 2, 3]) {
+            const plan: ChallengePlan = {
+              childId: 'c1',
+              skillId: skill.id,
+              strand: skill.strand,
+              stage: makeStage(grade, 'growing'),
+              interaction,
+              mode: 'quest',
+              purpose: 'core',
+              theme: 'animals',
+            };
+            seen(pickOfflineChallenge(plan, { seed }), `${skill.id} ${grade} ${interaction} seed ${seed}`);
+          }
+        }
+      }
+    }
+    expect(flagged).toEqual([]);
+  }, 60_000);
 });

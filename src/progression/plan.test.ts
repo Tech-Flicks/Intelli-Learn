@@ -273,6 +273,27 @@ describe('planFromContext: spaced reviews', () => {
     ]);
   });
 
+  it('keeps to one review in five items for the reviews of the regular mix too', () => {
+    const child = childProfile({ grade: '3' });
+    // Half of the skills are due, so both kinds of review have something to serve.
+    const states = allPractised(child.id).map((state, index) =>
+      index % 2 === 0 ? { ...state, reviewDueAt: MONDAY - DAY } : state,
+    );
+    const rng = seededRng(21);
+    const played: ChallengePlan[] = [];
+    for (let i = 0; i < 400; i += 1) {
+      const recent = played.slice(-TUNING.plan.recentWindow);
+      played.push(...planFromContext(context({ child, states, recent, rng }), 1));
+    }
+    const reviews = played.map((plan) => plan.purpose === 'review');
+    for (let i = 0; i + TUNING.review.atMostOneIn <= reviews.length; i += 1) {
+      expect(reviews.slice(i, i + TUNING.review.atMostOneIn).filter(Boolean).length).toBeLessThanOrEqual(1);
+    }
+    const share = reviews.filter(Boolean).length / reviews.length;
+    expect(share).toBeLessThanOrEqual(1 / TUNING.review.atMostOneIn);
+    expect(share).toBeGreaterThan(0.1);
+  });
+
   it('counts reviews that are already queued or were just played', () => {
     const child = childProfile({ grade: '3' });
     const states = [stateFor(child.id, 'logic-patterns', 17, { reviewDueAt: MONDAY - DAY })];
@@ -359,6 +380,37 @@ describe('planFromContext: concept checks', () => {
     const [robot] = planFromContext(context({ child, states: [ready()] }), 1, { mode: 'robot' });
     expect(robot?.purpose).not.toBe('check');
     expect(robot?.mode).toBe('robot');
+  });
+});
+
+describe('planFromContext: concept checks in a mode with one format', () => {
+  const child = childProfile({ grade: '3' });
+
+  it('plans the check as a plain quest in another format when the mode only has the format of the practice', () => {
+    const robotSkill = SKILLS.find((skill) => skill.modes.includes('robot') && skill.interactions.some((kind) => kind !== 'robot'));
+    if (!robotSkill) throw new Error('no robot skill with a second format');
+    const state = stateFor(child.id, robotSkill.id, clampStageToSkill(robotSkill, 17), {
+      checkPending: true,
+      mastery: 100,
+      recentInteractions: ['robot', 'robot', 'robot'],
+    });
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const [plan] = planFromContext(context({ child, states: [state], rng: seededRng(seed) }), 1, { mode: 'robot' });
+      expect(plan).toMatchObject({ purpose: 'check', skillId: robotSkill.id, mode: 'quest' });
+      expect(plan?.interaction).not.toBe('robot');
+    }
+  });
+
+  it('keeps the mode when the child has not just used its format on the skill', () => {
+    const robotSkill = SKILLS.find((skill) => skill.modes.includes('robot') && skill.interactions.some((kind) => kind !== 'robot'));
+    if (!robotSkill) throw new Error('no robot skill with a second format');
+    const state = stateFor(child.id, robotSkill.id, clampStageToSkill(robotSkill, 17), {
+      checkPending: true,
+      mastery: 100,
+      recentInteractions: ['choice', 'order'],
+    });
+    const [plan] = planFromContext(context({ child, states: [state] }), 1, { mode: 'robot' });
+    expect(plan).toMatchObject({ purpose: 'check', mode: 'robot', interaction: 'robot' });
   });
 });
 
@@ -474,6 +526,38 @@ describe('planFromContext: skill choice', () => {
     );
     const share = plans.filter((p) => p.skillId === 'math-counting-cardinality').length / plans.length;
     expect(share).toBeLessThan(0.4);
+  });
+
+  it('leaves a skill that ended at a lower grade to its spaced reviews', () => {
+    const child = childProfile({ grade: '7' });
+    // Counting ends at grade 2 and addition at grade 4; the child is at grade 7 in the rest of math.
+    const finished = ['math-counting-cardinality', 'math-addition-subtraction'];
+    const states = skillsForStrand('math').map((skill, index) =>
+      stateFor(child.id, skill.id, clampStageToSkill(skill, makeStage('7', 'growing')), {
+        mastery: finished.includes(skill.id) ? 100 : 50,
+        independentStreak: 1,
+        // The finished skills were practised longest ago, which would otherwise put them first.
+        lastPracticedAt: MONDAY - (finished.includes(skill.id) ? 30 : index + 1) * DAY,
+      }),
+    );
+    const plans = sample(context({ child, states, rng: seededRng(8) }), 400, { strand: 'math' });
+    expect(plans.filter((plan) => finished.includes(plan.skillId))).toEqual([]);
+
+    // Once its review is due, a finished skill comes back for it.
+    const due = states.map((state) => (state.skillId === 'math-addition-subtraction' ? { ...state, reviewDueAt: MONDAY - DAY } : state));
+    const withDue = sample(context({ child, states: due, rng: seededRng(8) }), 50, { strand: 'math' });
+    const back = withDue.filter((plan) => finished.includes(plan.skillId));
+    expect(back.length).toBeGreaterThan(0);
+    expect(back.every((plan) => plan.purpose === 'review' && plan.skillId === 'math-addition-subtraction')).toBe(true);
+  });
+
+  it('keeps practising a finished skill while nothing else in the strand is further on', () => {
+    const child = childProfile({ grade: '2' });
+    const top = makeStage('2', 'ready');
+    const states = [stateFor(child.id, 'math-counting-cardinality', top, { mastery: 100 })];
+    const scienceOff = controls({ strands: { math: true, science: false, technology: false, engineering: false, logic: false } });
+    const plans = sample(context({ child, states, controls: scienceOff, rng: sequenceRng([0.1, 0.99]) }), 5);
+    expect(plans.some((plan) => plan.skillId === 'math-counting-cardinality')).toBe(true);
   });
 
   it('does not open more skills while two are still new to the child', () => {
@@ -679,6 +763,29 @@ describe('planFromContext: placement', () => {
       // Counting ends at grade 2 and multiplication only starts there: neither can show a grade 1 or grade 3 level.
       expect(plan?.strand).toBe('math');
       expect(['math-counting-cardinality', 'math-multiplication-division']).not.toContain(plan?.skillId);
+    }
+  });
+
+  it('asks a fitting skill again rather than one that is not taught at the estimate', () => {
+    const child = childProfile({ grade: '1', placementDone: false });
+    const mathOnly = controls({ strands: { math: true, science: false, technology: false, engineering: false, logic: false } });
+    const preK = makeStage('PK', 'starting');
+    // Every math skill that exists at Pre-K was asked already; multiplication, fractions and algebra start later.
+    const asked = skillsForStrand('math').filter((skill) => skill.gradeExpectations.PK !== undefined);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.length).toBeLessThan(skillsForStrand('math').length);
+    const placement = {
+      ...freshPlacement(),
+      start: { math: makeStage('K', 'growing') },
+      estimates: { math: preK },
+      answered: asked.length,
+      attempted: asked.map((skill) => ({ skillId: skill.id, strand: 'math' as const, interaction: 'choice' as const })),
+    };
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const [plan] = planFromContext(context({ child, controls: mathOnly, placement, rng: seededRng(seed) }), 1);
+      expect(plan?.purpose).toBe('placement');
+      expect(plan?.stage).toBe(preK);
+      expect(asked.map((skill) => skill.id)).toContain(plan?.skillId);
     }
   });
 

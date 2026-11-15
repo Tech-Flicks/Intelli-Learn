@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { detectFrustration, outcomeOf, wrongTries } from './outcome';
-import { right, wrong } from './testing';
+import { ChallengeSchema, type Challenge } from '@/core/schemas';
+import { answerSpace, creditedOutcome, detectFrustration, outcomeOf, wrongTries } from './outcome';
+import { right, sampleContent, wrong } from './testing';
 
 const T = 1_000_000;
 
@@ -30,6 +31,49 @@ describe('outcomeOf', () => {
   it('counts wrong tries', () => {
     expect(wrongTries([wrong(T), wrong(T), right(T)])).toBe(2);
     expect(wrongTries([right(T)])).toBe(0);
+  });
+});
+
+describe('answerSpace and creditedOutcome', () => {
+  const withInteraction = (interaction: unknown, objects: unknown[] = []): Challenge =>
+    ChallengeSchema.parse({ ...sampleContent(), interaction, scene: { theme: 'space', objects } });
+  const options = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `o${i}`, label: `Option ${i}` }));
+  const apples = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `a${i}`, type: 'emoji', emoji: '🍎', x: 10 + i * 10, y: 50, tappable: true }));
+
+  it('counts the answers a child could give', () => {
+    expect(answerSpace(withInteraction({ kind: 'choice', options: options(2), correctIds: ['o0'] }))).toBe(2);
+    expect(answerSpace(withInteraction({ kind: 'choice', options: options(4), correctIds: ['o0'] }))).toBe(4);
+    expect(answerSpace(withInteraction({ kind: 'choice', multi: true, options: options(3), correctIds: ['o0', 'o1'] }))).toBe(7);
+    expect(answerSpace(withInteraction({ kind: 'tap', targetIds: ['a0'] }, apples(3)))).toBe(3);
+    expect(answerSpace(withInteraction({ kind: 'tap', targetIds: ['a0', 'a1'] }, apples(4)))).toBe(6);
+    const sort = {
+      kind: 'sort',
+      bins: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }],
+      items: [{ id: 'i1', label: 'one', binId: 'x' }, { id: 'i2', label: 'two', binId: 'y' }, { id: 'i3', label: 'three', binId: 'y' }],
+    };
+    expect(answerSpace(withInteraction(sort))).toBe(8);
+    const order = { kind: 'order', items: [{ id: 'o1', label: '1' }, { id: 'o2', label: '2' }, { id: 'o3', label: '3' }] };
+    expect(answerSpace(withInteraction(order))).toBe(6);
+    expect(answerSpace(sampleContent())).toBeGreaterThan(1000);
+  });
+
+  it('credits a second try as solved alone only when the wrong try did not give the answer away', () => {
+    expect(creditedOutcome('second-try', 1, 4)).toBe('second-try');
+    expect(creditedOutcome('second-try', 1, 1_000_000)).toBe('second-try');
+    // One wrong try on a two- or three-option item leaves little to choose from.
+    expect(creditedOutcome('second-try', 1, 2)).toBe('nudge');
+    expect(creditedOutcome('second-try', 1, 3)).toBe('nudge');
+    // Trying one option after the other.
+    expect(creditedOutcome('second-try', 2, 4)).toBe('nudge');
+    expect(creditedOutcome('second-try', 3, 1_000_000)).toBe('nudge');
+  });
+
+  it('leaves every other outcome as it is', () => {
+    expect(creditedOutcome('independent', 0, 2)).toBe('independent');
+    expect(creditedOutcome('nudge', 5, 2)).toBe('nudge');
+    expect(creditedOutcome('hint', 5, 2)).toBe('hint');
+    expect(creditedOutcome('walkthrough', 5, 2)).toBe('walkthrough');
   });
 });
 

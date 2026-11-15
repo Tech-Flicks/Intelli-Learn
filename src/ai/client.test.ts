@@ -17,7 +17,10 @@ vi.mock('@/data', () => ({
     world.usage.push(delta);
   }),
 }));
-vi.mock('@/security', () => ({ getApiKey: vi.fn(async () => world.apiKey) }));
+vi.mock('@/security', () => ({
+  getApiKeyFor: vi.fn(async () => world.apiKey),
+  hasApiKey: vi.fn(async () => world.apiKey !== null),
+}));
 
 import { chat, chatJson, clientTuning, resetClientSession } from './client';
 import { AiError } from './errors';

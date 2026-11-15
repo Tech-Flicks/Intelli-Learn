@@ -106,8 +106,9 @@ function AddChildModal({ open, onClose }: { open: boolean; onClose: () => void }
 
 function ChildRow({ child }: { child: ChildProfile }) {
   const { t } = useFormat();
+  // min-w-0: a long nickname makes the card's text wrap; it never makes the card wider than its column.
   return (
-    <li className="flex flex-col gap-3 rounded-3xl border border-ink-200 bg-white p-5 shadow-card">
+    <li className="flex min-w-0 flex-col gap-3 rounded-3xl border border-ink-200 bg-white p-5 shadow-card">
       <div className="flex items-center gap-3">
         <Avatar emoji={child.avatar} />
         <div className="min-w-0 flex-1">
@@ -132,13 +133,13 @@ function ChildRow({ child }: { child: ChildProfile }) {
       <div className="mt-auto flex flex-wrap gap-2">
         <GuardedLink
           to={`/parent/child/${child.id}`}
-          className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-brand-500 px-4 font-bold text-white hover:bg-brand-600"
+          className="inline-flex min-h-11 min-w-0 flex-auto items-center justify-center rounded-xl bg-brand-500 px-4 py-2 text-center font-bold wrap-anywhere text-white hover:bg-brand-600"
         >
           {t('parent.children.progress', { name: child.nickname })}
         </GuardedLink>
         <GuardedLink
           to={`/parent/child/${child.id}?tab=profile`}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl border-2 border-brand-300 bg-white px-4 font-bold text-brand-700 hover:bg-brand-50"
+          className="inline-flex min-h-11 min-w-0 items-center justify-center rounded-xl border-2 border-brand-300 bg-white px-4 py-2 text-center font-bold text-brand-700 hover:bg-brand-50"
         >
           {t('parent.children.edit')}
         </GuardedLink>

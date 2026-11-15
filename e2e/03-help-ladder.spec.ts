@@ -3,7 +3,7 @@
  * the walkthrough still leaves the answer to the child, and an easier sibling follows.
  */
 import { expect, test } from '@playwright/test';
-import { expectNoSkip, pickChild, seedPlacementDone, setupAndOpenPicker, shot, watchPage } from './helpers/app';
+import { calledWrong, expectNoSkip, pickChild, seedPlacementDone, setupAndOpenPicker, shot, watchPage } from './helpers/app';
 import { attemptsOf, challengesOf } from './helpers/db';
 import { answerCorrectly, answerWrongly, checkAgain, currentChallenge, finishSolved, nextAdventure, playScreen, solveCurrent } from './helpers/solver';
 
@@ -27,7 +27,8 @@ test('wrong tries lead to a hint, then the walkthrough, then an easier sibling',
   await oneBubble();
   await expect(bubble.getByRole('status')).not.toBeEmpty();
   await expect(bubble.getByRole('button', { name: 'Yes please!' })).toHaveCount(0);
-  await expect(page.getByText(/\b(wrong|incorrect)\b/i)).toHaveCount(0);
+  // No word of the app's own calls the try wrong (a challenge may be about a mistake: "Which step did Bolt get wrong?").
+  expect(await calledWrong(page, record)).toEqual([]);
   await shot(page, testInfo, 'play-wrong-answer');
   await expectNoSkip(page);
 

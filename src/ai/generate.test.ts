@@ -17,7 +17,10 @@ vi.mock('@/data', () => ({
     world.usage.push(delta);
   }),
 }));
-vi.mock('@/security', () => ({ getApiKey: vi.fn(async () => 'sk-test') }));
+vi.mock('@/security', () => ({
+  getApiKeyFor: vi.fn(async () => 'sk-test'),
+  hasApiKey: vi.fn(async () => true),
+}));
 vi.mock('@/offline', () => ({
   pickOfflineChallenge: vi.fn(() => OFFLINE),
   pickOfflineStory: vi.fn(),
@@ -217,11 +220,14 @@ describe('generateChallenge: AI path', () => {
     expect(result).toEqual({ content: OFFLINE, source: 'offline' });
     expect(chatCalls()).toHaveLength(2);
 
+    // The note is part of the one user message: two user messages in a row are refused by
+    // chat templates that want user and assistant to alternate.
     const retry = messagesOf(1);
-    expect(retry).toHaveLength(3);
-    expect(retry.some((message) => message.role === 'assistant')).toBe(false);
-    expect(retry[2]?.content).toMatch(/not suitable for a child/);
-    expect(retry[2]?.content).toMatch(/weapons/);
+    expect(retry.map((message) => message.role)).toEqual(['system', 'user']);
+    expect(retry[1]?.content.startsWith(messagesOf(0)[1]?.content ?? 'missing')).toBe(true);
+    expect(retry[1]?.content).toMatch(/not suitable for a child/);
+    expect(retry[1]?.content).toMatch(/weapons/);
+    expect(JSON.stringify(retry)).not.toContain('loads a gun');
   });
 
   it('applies the stricter tier only for strict children', async () => {
@@ -238,7 +244,7 @@ describe('generateChallenge: AI path', () => {
     moderationReply = () => fakeResponse({ results: [{ flagged: true, categories: { violence: true } }] });
     chatReplies = [example('number'), example('number')];
     expect((await generateChallenge(request())).source).toBe('offline');
-    expect(messagesOf(1)[2]?.content).toMatch(/moderation/);
+    expect(messagesOf(1)[1]?.content).toMatch(/moderation/);
   });
 
   it('is not blocked by a moderation outage', async () => {

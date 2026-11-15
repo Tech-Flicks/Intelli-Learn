@@ -187,7 +187,9 @@ describe('PlayScreen: solving', () => {
     expect(screen.queryByRole('button', { name: 'Yes please!' })).toBeNull();
     noSkipAnywhere();
 
-    // The second wrong try comes with an offer, nothing more.
+    // The second wrong try comes with an offer, nothing more. (A moment later: the same answer
+    // again at once would be a double tap on Check, which is one try.)
+    setPlayDeps({ now: () => Date.now() + 5000, random: () => 0.99 });
     await user.click(check());
     await user.click(await screen.findByRole('button', { name: 'Yes please!' }));
     await waitFor(() => expect(screen.getByTestId('bot-bubble')).toHaveTextContent('Look closely at the picture.'));

@@ -21,6 +21,7 @@ const en: Record<string, string> = {
   'child.picker.emptyTitle': 'No explorers yet',
   'child.picker.emptyText': 'Ask a grown-up to add you. Then your adventure can start!',
   'child.picker.emptyAction': 'Grown-ups: add a player',
+  'child.picker.resetNotice': 'Grown-ups: someone asked to reset this app, which deletes every player. If that was not you, tap the lock and enter your password to stop it.',
 
   // home
   'child.home.hello': 'Hi, {name}!',
@@ -253,6 +254,7 @@ const es: Record<string, string> = {
   'child.picker.emptyTitle': 'Todavía no hay exploradores',
   'child.picker.emptyText': 'Pide a un adulto que te agregue. ¡Así empieza tu aventura!',
   'child.picker.emptyAction': 'Adultos: agregar un jugador',
+  'child.picker.resetNotice': 'Adultos: alguien pidió restablecer esta app, lo que borra a todos los jugadores. Si no fuiste tú, toca el candado y escribe tu contraseña para detenerlo.',
 
   'child.home.hello': '¡Hola, {name}!',
   'child.home.pip.start': '¡Quiero encontrar el punto de partida perfecto para ti!',
@@ -563,6 +565,7 @@ const hi: Record<string, string> = {
   'child.picker.emptyTitle': 'अभी कोई खोजी नहीं है',
   'child.picker.emptyText': 'किसी बड़े से कहो कि तुम्हें जोड़ दें। फिर तुम्हारा सफ़र शुरू होगा!',
   'child.picker.emptyAction': 'बड़ों के लिए: खिलाड़ी जोड़ें',
+  'child.picker.resetNotice': 'बड़ों के लिए: किसी ने इस ऐप को रीसेट करने के लिए कहा है, जिससे सभी खिलाड़ी मिट जाएँगे। अगर यह आपने नहीं किया, तो ताले पर टैप करें और रोकने के लिए अपना पासवर्ड डालें।',
 
   'child.home.hello': 'नमस्ते, {name}!',
   'child.home.pip.start': 'मैं तुम्हारे लिए सबसे अच्छी शुरुआत ढूँढना चाहता हूँ!',

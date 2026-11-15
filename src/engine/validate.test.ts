@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Challenge } from '@/core/schemas';
 import { BUILD, CHOICE, makeChallenge, MATCH, NUMBER, ORDER, ROBOT, SORT, TAP, TAP_SCENE } from './testing/fixtures';
+import { checkAnswer } from './check';
 import { numbersInText, validateChallengeContent } from './validate';
 
 function problemsOf(c: Challenge): string {
@@ -131,7 +132,49 @@ describe('validateChallengeContent: tap', () => {
   });
 });
 
+describe('validateChallengeContent: tap targets a child cannot tell apart', () => {
+  const apple = (id: string, patch: Record<string, unknown> = {}) => ({ id, type: 'emoji', emoji: '🍎', x: 10, y: 50, size: 10, tappable: true, ...patch });
+  const apples = (patches: Record<string, unknown>[]) => ({ theme: 'farm', objects: patches.map((patch, index) => apple(`a${index + 1}`, { x: 10 + index * 15, ...patch })) });
+
+  it('reports a target that looks exactly like a tappable object that is not a target', () => {
+    // "Tap 3 apples": five identical apples, three of them the answer. Tapping another three is marked wrong.
+    const c = makeChallenge({ kind: 'tap', targetIds: ['a1', 'a2', 'a3'] }, { scene: apples([{}, {}, {}, {}, {}]) });
+    expect(problemsOf(c)).toContain('looks exactly like');
+    expect(checkAnswer(c.interaction, ['a3', 'a4', 'a5']).correct).toBe(false);
+  });
+
+  it('accepts look-alikes when all of them are targets, or the others cannot be tapped', () => {
+    const all = makeChallenge({ kind: 'tap', targetIds: ['a1', 'a2', 'a3'] }, { scene: apples([{}, {}, {}, { emoji: '🍐' }]) });
+    expect(validateChallengeContent(all)).toEqual([]);
+    const decoration = makeChallenge({ kind: 'tap', targetIds: ['a1'] }, { scene: apples([{}, { tappable: false }, { emoji: '🍐' }]) });
+    expect(validateChallengeContent(decoration)).toEqual([]);
+  });
+
+  it('accepts objects that differ in something a child can see', () => {
+    for (const patch of [{ size: 20 }, { color: '#ff0000' }, { label: 'ripe' }, { rotation: 90 }, { emoji: '🍏' }]) {
+      const c = makeChallenge({ kind: 'tap', targetIds: ['a1'] }, { scene: apples([patch, {}, {}]) });
+      expect(validateChallengeContent(c), JSON.stringify(patch)).toEqual([]);
+    }
+  });
+});
+
 describe('validateChallengeContent: sort, match, order', () => {
+  it('reports sort items that look the same but belong in different bins', () => {
+    const c = makeChallenge({
+      kind: 'sort',
+      bins: [{ id: 'even', label: 'Even' }, { id: 'odd', label: 'Odd' }],
+      items: [{ id: 'i1', label: '4', binId: 'even' }, { id: 'i2', label: '4', binId: 'odd' }, { id: 'i3', label: '7', binId: 'odd' }],
+    });
+    expect(problemsOf(c)).toContain('look exactly the same but belong in different bins');
+    // Twins in the same bin are fine: either card may go there.
+    const twins = makeChallenge({
+      kind: 'sort',
+      bins: [{ id: 'even', label: 'Even' }, { id: 'odd', label: 'Odd' }],
+      items: [{ id: 'i1', label: '4', binId: 'even' }, { id: 'i2', label: '4', binId: 'even' }, { id: 'i3', label: '7', binId: 'odd' }],
+    });
+    expect(validateChallengeContent(twins)).toEqual([]);
+  });
+
   it('reports items that point at unknown bins', () => {
     const c = makeChallenge({ ...SORT, items: [...SORT.items, { id: 'bird', label: 'Bird', binId: 'sky' }] });
     expect(problemsOf(c)).toContain('unknown bins: bird -> sky');
@@ -203,6 +246,26 @@ describe('validateChallengeContent: number', () => {
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('hint 2 gives away the exact answer (12)');
   });
+  it('lets a hint repeat a number that the question gives, even when it equals the answer', () => {
+    const birds = { intro: 'Birds sit on a wire.', question: 'There are 8 birds on a wire. 4 fly away. How many are left?' };
+    const restated = makeChallenge({ kind: 'number', answer: 4 }, { ...birds, hints: ['Do you have more or fewer now?', 'Start with 8 birds and take away 4, one at a time.'] });
+    expect(validateChallengeContent(restated)).toEqual([]);
+    const share = makeChallenge(
+      { kind: 'number', answer: 2 },
+      { question: 'Share 4 apples between 2 friends. How many does each friend get?', hints: ['Deal them out.', 'Deal the apples out to the 2 friends.'] },
+    );
+    expect(validateChallengeContent(share)).toEqual([]);
+    // Stating it as the result is still a giveaway.
+    for (const hint of ['8 - 4 = 4', 'Eight take away four leaves 4.', 'The answer is 4.', 'So 4 are left.']) {
+      expect(problemsOf(makeChallenge({ kind: 'number', answer: 4 }, { ...birds, hints: ['Look again.', hint] }))).toContain('hint 2 gives away');
+    }
+    // And a number the question does not give is one, however it is put.
+    const shells = makeChallenge(
+      { kind: 'number', answer: 10 },
+      { question: 'You have 7 shells and find 3 more. How many shells now?', hints: ['Count on.', 'Use a number line from 0 to 10.'] },
+    );
+    expect(problemsOf(shells)).toContain('hint 2 gives away the exact answer (10)');
+  });
   it('does not confuse the answer with other numbers in a hint', () => {
     const c = makeChallenge(NUMBER, { hints: ['There are 3 rows of 4.', 'Try 120 minus 112, or 1.2 times 10?'] });
     expect(validateChallengeContent(c)).toEqual([]);
@@ -224,6 +287,20 @@ describe('validateChallengeContent: number', () => {
     expect(problemsOf(makeChallenge({ kind: 'number', answer: 2.5 }))).toContain('no decimal point');
     expect(validateChallengeContent(makeChallenge({ kind: 'number', answer: 2.5, tolerance: 0.5 }))).toEqual([]);
     expect(problemsOf(makeChallenge({ kind: 'number', answer: 12345678901 }))).toContain('too long');
+  });
+  it('reports a tolerance so wide that a wrong answer is marked right', () => {
+    // Answer 12 with tolerance 100: 0 and 99 would both be correct.
+    expect(problemsOf(makeChallenge({ kind: 'number', answer: 12, tolerance: 100 }))).toContain('tolerance');
+    // A counting answer is exact: "7, give or take 1" marks 6 and 8 right.
+    expect(problemsOf(makeChallenge({ kind: 'number', answer: 7, tolerance: 1 }))).toContain('tolerance');
+    expect(problemsOf(makeChallenge({ kind: 'number', answer: 3.2, tolerance: 1, allowDecimal: true }))).toContain('tolerance');
+  });
+  it('accepts a small tolerance for measuring and estimating', () => {
+    expect(validateChallengeContent(makeChallenge({ kind: 'number', answer: 250, tolerance: 10 }))).toEqual([]);
+    expect(validateChallengeContent(makeChallenge({ kind: 'number', answer: 3.14, tolerance: 0.01, allowDecimal: true }))).toEqual([]);
+    expect(validateChallengeContent(makeChallenge({ kind: 'number', answer: 0.3, tolerance: 0.05, allowDecimal: true }))).toEqual([]);
+    // Less than one whole number on a keypad without a decimal point changes nothing.
+    expect(validateChallengeContent(makeChallenge({ kind: 'number', answer: 7, tolerance: 0.5 }))).toEqual([]);
   });
   it('extracts numbers from text', () => {
     expect(numbersInText('Try 12 and 3.5, then 1,250 or 7.')).toEqual([12, 3.5, 1250, 7]);

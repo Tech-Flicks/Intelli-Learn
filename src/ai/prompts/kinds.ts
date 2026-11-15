@@ -50,7 +50,7 @@ export const KIND_SHAPES: Record<InteractionKind, string[]> = {
     '- The child types the answer on a keypad. "answer" is the one correct number.',
     '- "tolerance" is 0 for exact answers. Use a small tolerance only for measuring or estimating tasks.',
     '- Set "allowDecimal": true when the answer has decimals, and "allowNegative": true when it is below zero. At most 3 decimal places.',
-    '- The hints must not contain the answer as a number, in digits or in words.',
+    '- The hints must not state the result, in digits or in words. A hint may repeat a number that the question gives ("start with 8 and take away 4"), but never as the outcome ("leaves 4", "= 4") and never a number the question does not give.',
     '- Say the unit in the question when there is one, and put it in "unit" (for example "cm", "apples").',
   ],
   robot: [

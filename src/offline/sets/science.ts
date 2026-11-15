@@ -326,7 +326,8 @@ export const SCIENCE_SETS: KnowledgeSet[] = [
     ask: 'Match the weather to what you use.',
     q: 'What do you use on a {x} day?',
     tapQ: 'Tap what you use on a {x} day.',
-    pairs: pairs(['rainy|🌧️ > umbrella|☂️', 'snowy|❄️ > mittens|🧤', 'sunny|☀️ > sunglasses|🕶️', 'windy|🌬️ > kite|🪁', 'cold|🥶 > scarf|🧣']),
+    // One weather for each thing and one thing for each weather: "cold" next to "snowy" made both mittens and a scarf right.
+    pairs: pairs(['rainy|🌧️ > umbrella|☂️', 'snowy|❄️ > mittens|🧤', 'sunny|☀️ > sunglasses|🕶️', 'windy|🌬️ > kite|🪁']),
   },
   {
     type: 'pair', id: 'sci-senses', strand: S, skills: ['science-living-things', 'science-cells-heredity'], grades: ['PK', '1'], scene: 'plain',
@@ -359,7 +360,7 @@ export const SCIENCE_SETS: KnowledgeSet[] = [
       'monkey|🐒 > rainforest|🌴 > A monkey climbs and finds fruit in the trees.',
       'whale|🐋 > ocean|🌊 > A whale swims and finds its food in the sea.',
       'cow|🐄 > farm|🚜 > A cow eats grass on a farm.',
-      'squirrel|🐿️ > forest|🌲 > A squirrel finds nuts and nests in trees.',
+      // No second kind of forest here: with "forest" for a squirrel, the monkey and the squirrel each fitted both.
     ]),
   },
   {

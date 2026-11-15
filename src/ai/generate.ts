@@ -5,17 +5,22 @@
  * (`relaxChallengeJson`), the zod schema, `normalizeChallenge`, the engine's
  * semantic validators, a check that it is the interaction kind that was asked
  * for, and the safety checks. One round of feedback is allowed; after that
- * the offline bank takes over, so a child never waits on a broken model and
- * never sees unchecked content.
+ * the offline bank takes over, so a child never sees unchecked content.
+ *
+ * Every result is written to the diagnostics log, with the reason when the
+ * offline bank had to step in, so that the parent can see it. After three
+ * failed builds in a row generation pauses (see `generationPause`): a model
+ * that cannot do the job must not use up the day's requests.
  */
 import { ChallengeSchema, type Challenge } from '@/core/schemas';
 import type { ChallengeSource, InteractionKind, Locale } from '@/core/types';
-import { checkBudget } from '@/data';
+import { checkBudget, recordUsage } from '@/data';
 import { normalizeChallenge, validateChallengeContent } from '@/engine';
 import { pickOfflineChallenge } from '@/offline';
-import { chatJson, repairMessage, type ChatMessage } from './client';
+import { chatJson, repairMessage, timeoutScale, type ChatMessage } from './client';
 import { loadAiConfig, type AiConfig } from './config';
-import { buildChallengePrompt, buildRemixPrompt, type Prompt } from './prompts';
+import { generationPause, noteAiResult, outcomeOfError, recentAiResults, type AiOutcome, type AiTask } from './diagnostics';
+import { buildChallengePrompt, buildRemixPrompt, type Prompt, type PromptOptions } from './prompts';
 import { checkChallengeSafety, localSafetyCheck } from './safety';
 import { revealsAnswer } from './leak';
 import { relaxChallengeJson } from './relax';
@@ -23,6 +28,9 @@ import type { GenerateChallengeRequest, RemixChallengeRequest } from './types';
 
 /** Room for a full challenge with a rich scene and one small svg. */
 const CHALLENGE_MAX_TOKENS = 3000;
+
+/** `timeoutScale` of an endpoint on this computer or the home network. */
+const LOCAL_TIMEOUT_SCALE = 4;
 
 /** Problems that make a challenge unusable: wrong kind, or anything the engine's validators report. */
 export function hardProblems(content: Challenge, kind: InteractionKind): string[] {
@@ -51,10 +59,16 @@ async function availableConfig(): Promise<AiConfig | null> {
   return budget.allowed ? loaded.config : null;
 }
 
+/** Why the model's work could not be used, for the diagnostics log. */
+interface Rejection {
+  outcome: AiOutcome;
+  message: string;
+}
+
 /**
  * Runs the generate, validate, give-feedback-once loop. Returns a checked
- * challenge, or null when the model could not produce one. Throws `AiError`
- * for transport problems (the callers turn that into their fallback).
+ * challenge, or the reason when the model could not produce one. Throws
+ * `AiError` for transport problems (the callers turn that into their fallback).
  */
 async function produceChallenge(
   prompt: Prompt,
@@ -62,12 +76,13 @@ async function produceChallenge(
   child: { strictness: 'strict' | 'standard'; locale: Locale },
   config: AiConfig,
   signal: AbortSignal | undefined,
-): Promise<Challenge | null> {
+): Promise<Challenge | Rejection> {
   const base: ChatMessage[] = [
     { role: 'system', content: prompt.system },
     { role: 'user', content: prompt.user },
   ];
   let messages = base;
+  let rejection: Rejection = { outcome: 'validation', message: 'The challenge did not pass the checks.' };
   for (let round = 0; round < 2; round += 1) {
     const parsed = await chatJson(messages, ChallengeSchema, {
       signal,
@@ -81,12 +96,15 @@ async function produceChallenge(
     if (hard.length === 0) {
       const verdict = await checkChallengeSafety(content, child.strictness);
       if (!verdict.safe) {
-        // Do not echo unsuitable content back: ask for a different challenge.
+        rejection = { outcome: 'safety', message: `The challenge was not suitable for a child (${verdict.reason}).` };
+        // Do not echo unsuitable content back: ask for a different challenge. The note goes into
+        // the one user message, because many chat templates (Mistral, Gemma) refuse two user
+        // messages in a row.
         messages = [
-          ...base,
+          base[0] as ChatMessage,
           {
             role: 'user',
-            content: `Your previous challenge was rejected because it is not suitable for a child (${verdict.reason}). Create a different, gentle challenge that follows every safety rule, and return the full JSON only.`,
+            content: `${prompt.user}\n\nYour previous challenge for this data was rejected because it is not suitable for a child (${verdict.reason}). Create a different, gentle challenge that follows every safety rule, and return the full JSON only.`,
           },
         ];
         continue;
@@ -97,7 +115,52 @@ async function produceChallenge(
       messages = [...base, { role: 'assistant', content: JSON.stringify(parsed) }, { role: 'user', content: repairMessage(soft) }];
       continue;
     }
+    rejection = { outcome: 'validation', message: `The challenge had mistakes: ${hard.slice(0, 2).join('; ')}` };
     messages = [...base, { role: 'assistant', content: JSON.stringify(parsed) }, { role: 'user', content: repairMessage(hard) }];
+  }
+  return rejection;
+}
+
+function isRejection(value: Challenge | Rejection): value is Rejection {
+  return 'outcome' in value;
+}
+
+/**
+ * One build with the bookkeeping around it: not while generation is paused after repeated
+ * failures, and with the result (and the reason of a failure) written to the diagnostics log.
+ * Returns null when the caller has to use its fallback. Never throws.
+ */
+async function build(
+  task: AiTask,
+  kind: InteractionKind,
+  child: { strictness: 'strict' | 'standard'; locale: Locale },
+  signal: AbortSignal | undefined,
+  makePrompt: (opts: PromptOptions) => Prompt,
+): Promise<Challenge | null> {
+  let config: AiConfig | null = null;
+  const started = Date.now();
+  const note = (outcome: AiOutcome, message: string): Promise<void> =>
+    noteAiResult({ at: Date.now(), task, kind, model: config?.chatModel ?? '', outcome, message, ms: Date.now() - started });
+  try {
+    if (signal?.aborted) return null;
+    config = await availableConfig();
+    if (!config) return null;
+    if (generationPause(await recentAiResults(), Date.now())) return null;
+
+    // A model on the family's own computer writes slowly: ask it for a small scene.
+    const prompt = makePrompt({ compact: timeoutScale(config) >= LOCAL_TIMEOUT_SCALE });
+    const result = await produceChallenge(prompt, kind, child, config, signal);
+    if (!isRejection(result)) {
+      await note('ok', '');
+      return result;
+    }
+    // The requests were answered, so the client counted no failure: this one is the app's verdict.
+    await recordUsage({ failures: 1 }).catch(() => undefined);
+    await note(result.outcome, result.message);
+  } catch (error) {
+    // Any failure (network, budget, abort, bad output) ends in the caller's fallback.
+    const failed = outcomeOfError(error);
+    if (failed) await note(failed.outcome, failed.message);
   }
   return null;
 }
@@ -109,25 +172,17 @@ function offline(req: GenerateChallengeRequest): { content: Challenge; source: C
 /**
  * A challenge for the plan. Never throws. Falls back to the offline bank when
  * the provider is 'demo', the settings are incomplete, the budget is spent,
- * the request is aborted, or the model cannot produce a valid, safe challenge.
+ * the request is aborted, generation is paused after repeated failures, or the
+ * model cannot produce a valid, safe challenge.
  */
 export async function generateChallenge(req: GenerateChallengeRequest): Promise<{ content: Challenge; source: ChallengeSource }> {
-  try {
-    if (req.signal?.aborted) return offline(req);
-    const config = await availableConfig();
-    if (!config) return offline(req);
-
+  const content = await build('challenge', req.plan.interaction, req.child, req.signal, (opts) => {
     // A child's idea is only passed on when it is a harmless thing to draw.
     const idea = req.studioIdea?.trim() ?? '';
     const safeIdea = idea !== '' && localSafetyCheck(idea, req.child.strictness).safe ? idea : undefined;
-    const prompt = buildChallengePrompt({ ...req, studioIdea: safeIdea });
-
-    const content = await produceChallenge(prompt, req.plan.interaction, req.child, config, req.signal);
-    if (content) return { content, source: 'ai' };
-  } catch {
-    // Any failure (network, budget, abort, bad output) ends in the offline bank.
-  }
-  return offline(req);
+    return buildChallengePrompt({ ...req, studioIdea: safeIdea }, opts);
+  });
+  return content ? { content, source: 'ai' } : offline(req);
 }
 
 /** True when the remix is a new challenge and not a copy of the original. */
@@ -142,14 +197,6 @@ function isDifferent(a: Challenge, b: Challenge): boolean {
  * or the result fails validation or safety. Never throws.
  */
 export async function remixChallenge(req: RemixChallengeRequest): Promise<Challenge | null> {
-  try {
-    if (req.signal?.aborted) return null;
-    const config = await availableConfig();
-    if (!config) return null;
-    const prompt = buildRemixPrompt(req);
-    const content = await produceChallenge(prompt, req.original.interaction.kind, req.child, config, req.signal);
-    return content && isDifferent(content, req.original) ? content : null;
-  } catch {
-    return null;
-  }
+  const content = await build('remix', req.original.interaction.kind, req.child, req.signal, (opts) => buildRemixPrompt(req, opts));
+  return content && isDifferent(content, req.original) ? content : null;
 }

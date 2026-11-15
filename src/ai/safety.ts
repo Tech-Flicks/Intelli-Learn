@@ -10,11 +10,18 @@
  *
  * Words that science and engineering lessons need stay allowed in both tiers:
  * "dead plants and animals" (decomposers, fossils), "blood", "skeleton",
- * "knife" as a wedge or kitchen tool.
+ * "knife" as a wedge or kitchen tool, and the harmless twins of blocked words
+ * that name a thing of the lesson: soap "kills germs", a "glue gun", "volcanic
+ * bombs", "sexual reproduction", "rubbing alcohol", "has drunk", a "naked mole
+ * rat", "wire strippers", "our secret code", and in the strict tier a "vampire
+ * bat", a "poison dart frog" and "creepy-crawlies". Each twin is a fixed
+ * phrase; the word in any other company is blocked as before. The rules about
+ * personal information, meeting and secrets have no such twins.
  *
  * `checkChallengeSafety` runs the blocklist over every text of a challenge and
  * then, when an AI endpoint is configured and offers it, the endpoint's
- * moderation service. A moderation outage never blocks play.
+ * moderation service. A moderation outage never blocks play. The tutor's chat
+ * replies and story outlines get the same second opinion (`moderateTexts`).
  */
 import type { Challenge, SafetyVerdict } from '@/core/schemas';
 import { postJson } from './client';
@@ -35,6 +42,12 @@ const PERSONAL_EN =
   "(?:real\\s+|full\\s+|whole\\s+|last\\s+|first\\s+|own\\s+|home\\s+)?(?:name|surname|address|phone(?:\\s+number)?|telephone(?:\\s+number)?|mobile\\s+number|cell\\s+number|password|passcode|e-?mail(?:\\s+address)?|birthday|birth\\s*date|date\\s+of\\s+birth|age|school(?:'s)?\\s+name|school|teacher(?:'s)?\\s+name|zip\\s+code|post\\s*code|location|street|city|town)";
 const PERSONAL_ES =
   '(?:verdadero\\s+|numero\\s+de\\s+)?(?:nombre|apellido|direccion|telefono|contraseña|correo|edad|escuela|colegio|cumpleaños)';
+/** Family members and teachers, whose names and details are personal too. */
+const KIN_EN = '(?:mom|mum|mommy|mummy|mother|mama|dad|daddy|father|papa|parents?|brothers?|sisters?|teachers?|family|grandma|grandpa)';
+/** Places that tell where a child can be found. */
+const PLACE_EN = '(?:city|town|village|street|road|country|state|neighbou?rhood|suburb)';
+const YOU = '(?:you|u)';
+const YOUR = '(?:your|ur)';
 const PERSONAL_HI = '(?:असली\\s+|पूरा\\s+|घर\\s+का\\s+)?(?:नाम|पता|फोन\\s+नंबर|फोन|मोबाइल\\s+नंबर|पासवर्ड|ईमेल)';
 
 interface Rule {
@@ -43,15 +56,22 @@ interface Rule {
   words: string[];
 }
 
+/** What soap, heat, frost and weedkiller kill in a science lesson. Anything else that is killed stays blocked. */
+const KILLED_IN_SCIENCE =
+  '(?:(?:the|many|most|some|all|any|off|of|harmful|bad|these|those|young|more|both)\\s+){0,4}(?:germs?|bacteria|microbes?|virus(?:es)?|weeds?|mould|mold|pests?|plants?|seedlings?|crops?)(?![a-z])';
+/** Tools and instruments with "gun" in their name. Toy guns are not among them. */
+const TOOL_BEFORE_GUN = '(?<!(?:glue|radar|staple|heat|spray)[\\s-])';
+
 const TIER1: Rule[] = [
   {
     category: 'violence',
     words: [
-      'kill(?:s|ed|ing)?', 'killers?(?!\\s+whales?)', 'murder\\w*', 'stab(?:s|bed|bing)?', 'strangl\\w+', 'behead\\w*',
+      `kill(?:s|ed|ing)?(?!\\s+${KILLED_IN_SCIENCE})`, 'killers?(?!\\s+whales?)', 'murder\\w*', 'stab(?:s|bed|bing)?', 'strangl\\w+', 'behead\\w*',
       'slaughter\\w*', 'massacre\\w*', 'tortur\\w+', 'assassin\\w*', 'kidnap\\w*', 'gore', 'gory', 'corpses?',
       'dead\\s+bod(?:y|ies)', 'dismember\\w*', 'decapitat\\w*', 'mutilat\\w*', 'bloodbath', 'bloodshed',
       'shoot(?:s|ing)?\\s+(?:him|her|them|you|people|someone|somebody|everyone)', 'shot\\s+(?:dead|him|her|them)',
       'gunshots?', 'shooters?', 'burn(?:ed|t|ing)?\\s+(?:alive|to\\s+death)',
+      "(?:i|we)(?:'ll|\\s+will|'m\\s+going\\s+to|\\s+am\\s+going\\s+to|\\s+are\\s+going\\s+to|\\s+gonna)\\s+(?:hurt|hit|beat|punch|kick|slap)\\s+(?:you|u)",
       // Spanish
       'matar(?:on|an|as|e|emos)?', 'mato', 'matando', 'asesin\\w+', 'apuñal\\w+', 'degoll\\w+', 'secuestr\\w+', 'cadaver(?:es)?',
       // Hindi
@@ -62,14 +82,14 @@ const TIER1: Rule[] = [
     category: 'self-harm',
     words: [
       'suicid\\w*', 'self-?\\s?harm\\w*', '(?:hurt|harm|cut|kill|hang|starve)\\s+(?:yourself|myself|himself|herself|themselves)',
-      'end\\s+(?:your|my)\\s+life', 'आत्महत्या', 'खुदकुशी',
+      'end\\s+(?:your|my)\\s+life', 'kys', 'आत्महत्या', 'खुदकुशी',
     ],
   },
   {
     category: 'weapons',
     words: [
-      'guns?', 'handguns?', 'shotguns?', 'rifles?', 'pistols?', 'revolvers?', 'firearms?',
-      'bullets?(?!\\s+(?:trains?|points?|lists?))', '(?<!bath\\s)bombs?', 'bomb(?:ed|ing|er|ers)', 'grenades?', 'explosives',
+      `${TOOL_BEFORE_GUN}guns?`, 'handguns?', 'shotguns?', 'rifles?', 'pistols?', 'revolvers?', 'firearms?',
+      'bullets?(?!\\s+(?:trains?|points?|lists?))', '(?<!bath\\s)(?<!volcanic\\s)(?<!lava\\s)bombs?', 'bomb(?:ed|ing|er|ers)', 'grenades?', 'explosives',
       'dynamite', 'missiles?', 'weapon(?:s|ry)?', 'daggers?', 'machetes?', 'ammo', 'ammunition', 'landmines?', 'nukes?',
       'pistolas?', 'escopetas?', 'fusil(?:es)?', 'armas?\\s+de\\s+fuego', 'explosivos', 'misil(?:es)?',
       'बंदूक', 'बन्दूक', 'पिस्तौल', 'बम', 'बमों', 'हथियार',
@@ -78,9 +98,9 @@ const TIER1: Rule[] = [
   {
     category: 'sexual content',
     words: [
-      'sex', 'sexy', 'sexual\\w*', 'sexting', 'porn\\w*', 'nudes?', 'nudity', 'naked(?!\\s+eye)', 'erotic\\w*', 'rap(?:e|ed|es|ing|ist|ists)',
+      'sex', 'sexy', 'sexual(?!\\s+reproduction(?![a-z]))\\w*', 'sexting', 'porn\\w*', 'nudes?', 'nudity', 'naked(?!\\s+(?:eye|mole[\\s-]rats?))', 'erotic\\w*', 'rap(?:e|ed|es|ing|ist|ists)',
       'molest\\w*', 'genital\\w*', 'penis(?:es)?', 'vaginas?', 'boobs?', '(?<!chicken\\s)(?<!turkey\\s)breasts?', 'tits', 'titties', 'condoms?', 'orgasm\\w*',
-      'masturbat\\w*', 'fetish\\w*', 'prostitut\\w*', 'strippers?', 'lingerie', 'horny', 'pedophil\\w*', 'incest\\w*', 'hentai',
+      'masturbat\\w*', 'fetish\\w*', 'prostitut\\w*', '(?<!wire\\s)strippers?', 'lingerie', 'horny', 'pedophil\\w*', 'incest\\w*', 'hentai',
       'xxx', 'nsfw', 'blowjob\\w*', 'handjob\\w*', 'dildo\\w*', 'anal', 'semen', 'erection', 'ejaculat\\w*', 'topless', 'seduc\\w+',
       'make\\s+out\\s+with', 'sleep\\s+with\\s+(?:him|her|me|you)',
       'sexo', 'desnud[oa]s?', 'violador(?:es)?', 'violacion(?:es)?', 'pene', 'tetas?', 'culo', 'condon(?:es)?',
@@ -93,8 +113,8 @@ const TIER1: Rule[] = [
       'drugs?', 'cocaine', 'cocaina', 'heroin', 'marijuana', 'marihuana', 'cannabis', 'methamphetamine', 'meth', 'opioids?',
       'opium', 'narcotics?', 'lsd', 'fentanyl', 'ketamine', 'vap(?:e|es|ed|ing)', 'e-?cigarettes?', 'cigarettes?', 'cigars?',
       'tobacco', 'nicotine', 'smok(?:e|es|ed|ing)\\s+(?:a\\s+|some\\s+)?(?:cigarettes?|weed|pot|tobacco|joints?)',
-      'get(?:s|ting)?\\s+(?:drunk|stoned|wasted)', 'stoned', 'overdos\\w+', 'alcohol(?:ic|ics|ism)?',
-      '(?<!root\\s)(?<!ginger\\s)beers?', 'wines?', 'vodka', 'whisk(?:e)?ys?', 'liquor', 'drunk(?:en)?', 'booze', 'tequila',
+      'get(?:s|ting)?\\s+(?:drunk|stoned|wasted)', 'stoned', 'overdos\\w+', '(?<!rubbing\\s)(?<!isopropyl\\s)alcohol(?:ic|ics|ism)?(?!\\s+thermometers?)',
+      '(?<!root\\s)(?<!ginger\\s)beers?', 'wines?', 'vodka', 'whisk(?:e)?ys?', 'liquor', '(?<!(?:has|have|had)\\s)drunk(?:en)?', 'booze', 'tequila',
       'champagne', 'hangover',
       'drogas?', 'cervezas?', 'borrach[oa]s?', 'emborrach\\w+', 'cigarrillos?', 'tabaco', 'licor(?:es)?', 'fumar',
       `शराब${DEVA_TAIL}`, 'नशा', 'नशे', 'नशीली', 'नशीले', 'ड्रग्स', 'ड्रग', 'सिगरेट', 'तंबाकू', 'तम्बाकू', 'बीयर', 'बियर', 'गांजा',
@@ -121,6 +141,7 @@ const TIER1: Rule[] = [
     words: [
       'stupid', 'idiot(?:s|ic)?', 'moron(?:s|ic)?', 'dumb', 'losers?', 'worthless', 'pathetic', 'shut\\s+up',
       "you(?:'re|\\s+are)\\s+(?:so\\s+|too\\s+|really\\s+)?(?:hopeless|useless|lazy|a\\s+failure)", 'i\\s+hate\\s+(?:you|myself)',
+      '(?:nobody|no\\s+one|no-one)\\s+(?:likes|loves|wants|cares\\s+about)\\s+(?:you|u)',
       'idiotas?', 'estupid[oa]s?', 'tont[oa]s?', 'imbecil(?:es)?', 'callate',
       'बेवकूफ', 'मूर्ख', 'बुद्धू', 'निकम्मा', 'निकम्मे', 'bewakoof', 'bevkoof',
     ],
@@ -143,18 +164,37 @@ const TIER1: Rule[] = [
     words: [
       `${NOT_ADVICE}(?:tell|give|send|show|text|email)\\s+(?:me|us)\\s+your\\s+${PERSONAL_EN}`,
       `${NOT_DESCRIBED}(?:type|enter|write|say|spell)(?:\\s+in|\\s+down)?\\s+your\\s+${PERSONAL_EN}`,
-      `what(?:'s|\\s+is|s)\\s+your\\s+${PERSONAL_EN}`,
-      'where\\s+do\\s+you\\s+live', 'how\\s+old\\s+are\\s+you', '(?:what|which)\\s+school\\s+do\\s+you\\s+go',
-      'where\\s+is\\s+your\\s+(?:house|home|school)', 'are\\s+you\\s+(?:home\\s+)?alone',
+      // The pattern rather than one phrasing: a question that joins "you/your" with something personal.
+      `what(?:'s|\\s+is|s|\\s+are|\\s+was)\\s+${YOUR}\\s+${PERSONAL_EN}`, `what\\s+ur\\s+${PERSONAL_EN}`,
+      `what(?:'s|\\s+is|s|\\s+are)?\\s+${YOUR}\\s+${KIN_EN}(?:'s|s'|')?\\s+(?:(?:real|full|first|last)\\s+)?(?:names?|surname|phone|number|address|e-?mail)`,
+      `(?:what|which)(?:'s|\\s+is|s|\\s+are)?\\s+the\\s+names?\\s+of\\s+${YOUR}\\s+(?:school|${KIN_EN}|${PLACE_EN})`,
+      `(?:what|which)\\s+(?:${PLACE_EN}|building|house|apartment)\\s+(?:do|did)\\s+${YOU}\\s+(?:live|stay|come\\s+from)`,
+      `(?:what|which)\\s+${PLACE_EN}\\s+(?:are|r)\\s+${YOU}\\s+(?:in|from)`,
+      `(?:what|which)\\s+${PLACE_EN}\\s+is\\s+${YOUR}\\s+(?:house|home|school|apartment)`,
+      `where\\s+(?:do|did)\\s+${YOU}\\s+(?:live|stay|go\\s+to\\s+school)`, 'where\\s+u\\s+(?:live|stay|from)',
+      `where\\s+(?:are|r)\\s+${YOU}\\s+from`,
+      `how\\s+old\\s+(?:are|r)\\s+${YOU}`, `how\\s+old\\s+will\\s+${YOU}\\s+be\\s+(?:on|at)\\s+${YOUR}\\s+(?:next\\s+)?birthday`,
+      `when(?:'s|\\s+is|s)\\s+${YOUR}\\s+birthday`, `when\\s+were\\s+${YOU}\\s+born`, `what\\s+(?:day|month|year)\\s+were\\s+${YOU}\\s+born`,
+      `(?:what|which)\\s+school\\s+(?:do|did)\\s+${YOU}\\s+(?:go|attend)`,
+      `where(?:'s|\\s+is|s)\\s+${YOUR}\\s+(?:house|home|school)`, `(?:are|r)\\s+${YOU}\\s+(?:home\\s+)?alone`,
+      // Invitations to get in touch or to meet.
+      '(?:add|friend|follow)\\s+me\\s+on', '(?:dm|pm|message|text|telegram|snap|skype|whatsapp|e-?mail)\\s+me',
+      'call\\s+me\\s+(?:at|on)', "come\\s+alone", "come\\s+(?:to|over|with|and|here)\\s+(?:[a-z']+\\s+){0,4}alone",
       `${NOT_ADVICE}(?:send|share|post|upload)\\s+(?:me\\s+|us\\s+)?(?:a\\s+|your\\s+)(?:photo|picture|selfie|pic)`,
       'credit\\s+card\\s+number', 'social\\s+security\\s+number', 'meet\\s+(?:me|us)\\s+(?:at|in|outside)',
       "(?:don't|dont|do\\s+not)\\s+tell\\s+your\\s+(?:parents?|mom|mum|dad|teacher)", 'keep\\s+(?:it|this)\\s+(?:a\\s+)?secret\\s+from',
-      'our\\s+(?:little\\s+)?secret',
+      // A code or a message to crack is a puzzle; a secret that is shared stays blocked.
+      'our\\s+(?:little\\s+)?secret(?!\\s+(?:codes?|messages?|numbers?|words?|patterns?)(?![a-z]))',
       'como\\s+te\\s+llamas', `cual\\s+es\\s+tu\\s+${PERSONAL_ES}`, 'donde\\s+vives', 'cuantos\\s+años\\s+tienes',
+      'en\\s+que\\s+(?:ciudad|pueblo|calle|pais|barrio)\\s+vives', 'de\\s+donde\\s+eres', 'cuando\\s+es\\s+tu\\s+cumpleaños',
+      'como\\s+se\\s+llaman?\\s+tus?\\s+(?:escuela|colegio|maestr[oa]|profesor|profesora|mama|papa|madre|padre|padres|herman[oa]s?|calle|ciudad|pueblo|barrio)',
       `(?<!(?:nunca|no|jamas)\\s+(?:[a-zñ]+\\s+){0,2})(?:dime|dinos|dame|danos|enviame|mandame|escribe|ingresa|introduce)\\s+tu\\s+${PERSONAL_ES}`,
       'a\\s+que\\s+(?:escuela|colegio)\\s+vas', 'estas\\s+sol[oa]\\s+en\\s+casa',
       '(?:तुम्हारा|आपका|तेरा)\\s+(?:असली\\s+|पूरा\\s+)?नाम\\s+क्या', `(?:तुम|आप|तू)\\s+कहां\\s+रहत${DEVA_TAIL}`,
       `(?:अपना|तुम्हारा|आपका)\\s+${PERSONAL_HI}\\s+(?:बताओ|बताइए|बताइये|लिखो|लिखिए|लिखिये|भेजो|भेजिए|डालो|क्या\\s+है)`,
+      '(?:तुम|आप|तू)\\s+(?:किस|कौन\\s+से)\\s+(?:शहर|गांव|मोहल्ले|गली|स्कूल)\\s+में',
+      '(?:तुम्हारी|तुम्हारे|आपकी|आपके|तेरी|तेरे)\\s+(?:मम्मी|मां|माता|पापा|पिता|भाई|बहन|टीचर|शिक्षक|शिक्षिका)(?:\\s+जी)?\\s+(?:का|की|के)\\s+नाम',
+      '(?:तुम्हारा|आपका|तेरा)\\s+जन्मदिन\\s+कब',
       '(?:तुम|आप)\\s+कितने\\s+साल\\s+के', '(?:तुम्हारी|आपकी)\\s+उम्र\\s+क्या', '(?:तुम्हारे|आपके|अपने)\\s+स्कूल\\s+का\\s+नाम',
     ],
   },
@@ -181,9 +221,9 @@ const TIER2: Rule[] = [
   {
     category: 'scary content',
     words: [
-      'scary', 'scarier', 'scariest', 'terrifying', 'terrified', 'terror', 'creepy', 'spooky', 'haunt(?:s|ed|ing)?', 'nightmares?',
-      'ghosts?', 'ghostly', 'zombies?', 'vampires?', 'werewol(?:f|ves)', '(?<!tasmanian\\s)devils?', 'evil', 'blood(?:y|ied)',
-      'bleed(?:s|ing)?', 'bled', 'wounded', 'swords?', 'poison(?:s|ed|ous|ing)?',
+      'scary', 'scarier', 'scariest', 'terrifying', 'terrified', 'terror', 'creepy(?![\\s-]+crawl(?:y|ies|ers?))', 'spooky', 'haunt(?:s|ed|ing)?', 'nightmares?',
+      'ghosts?', 'ghostly', 'zombies?', 'vampires?(?!\\s+(?:bats?|squids?))', 'werewol(?:f|ves)', '(?<!tasmanian\\s)devils?', 'evil', 'blood(?:y|ied)',
+      'bleed(?:s|ing)?', 'bled', 'wounded', 'swords?', 'poison(?![\\s-]+dart[\\s-]+frogs?)(?:s|ed|ous|ing)?',
       '(?<!tug[\\s-]+of[\\s-]+)wars?', 'warfare', 'hell', 'damn(?:ed)?', 'crap(?:py)?', 'slave(?:s|ry)?', 'gambl\\w+', 'casinos?',
       'fantasmas?', 'zombis?', 'vampiros?', 'diablos?', 'pesadillas?', 'espeluznante\\w*', 'sangrient[oa]s?', 'venenos?',
       'venenos[oa]s?', 'espadas?', 'guerras?', 'maldit[oa]s?', 'infierno', 'malvad[oa]s?',
@@ -206,16 +246,25 @@ const TIER2: Rule[] = [
   },
 ];
 
-/** Link-like text. Matched without the whole-word wrapper. */
+/**
+ * Link-like text. Matched without the whole-word wrapper.
+ *
+ * A bare "name.tld" counts for the endings that are not everyday words. Endings that are
+ * ("es", "is", "in", "to", "me", "ai", ...) would trip on a missing space after a full stop
+ * ("La luna.Es grande"); those addresses are still caught with a path ("bit.ly/abc" style),
+ * with "www." or with "http".
+ */
 const LINK_PATTERNS: RegExp[] = [
   /https?:/u,
   /(?<![a-z0-9])www\./u,
-  /[a-z0-9-]+\.(?:com|net|org|edu|gov|info|biz|xyz|app|gg)(?![a-z0-9])/u,
+  /[a-z0-9-]+\.(?:com|net|org|edu|gov|info|biz|xyz|app|gg|io|ly|tv|cc|uk|dev|tk|ru|cn|jp|br|au|ca|nl|ch|mx|icu|vip|mobi|fm|gd|pw|ws)(?![a-z0-9])/u,
+  /(?<![a-z0-9.])[a-z0-9-]{2,}\.[a-z]{2,}\/[a-z0-9]/u,
   /[\w.+-]+@[\w-]+\.[a-z]{2,}/u,
 ];
 
-const EMOJI_TIER1 = ['🔫', '🗡', '⚔', '💣', '🚬', '🍺', '🍻', '🍷', '🍸', '🍹', '🥃', '🥂', '🖕', '💉', '☠', '🔞'];
-const EMOJI_TIER2 = ['👻', '👹', '👺', '🧟', '🧛', '⚰', '🪦', '🩸', '💩', '👿', '😈', '🎰', '💋', '🤮', '🤬'];
+// (The syringe is in the strict tier only: it also stands for a vaccination or a lab measure.)
+const EMOJI_TIER1 = ['🔫', '🗡', '⚔', '💣', '🚬', '🍺', '🍻', '🍷', '🍸', '🍹', '🥃', '🥂', '🖕', '☠', '🔞'];
+const EMOJI_TIER2 = ['💉', '👻', '👹', '👺', '🧟', '🧛', '⚰', '🪦', '🩸', '💩', '👿', '😈', '🎰', '💋', '🤮', '🤬'];
 
 interface CompiledRule {
   category: string;
@@ -291,10 +340,43 @@ export function localSafetyCheck(text: string, strictness: Strictness = 'strict'
 export function svgTextContent(svg: string): string {
   return svg
     .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, ' $1 ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&[a-z#0-9]+;/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+/** Resolves the character references a browser resolves before it draws text. Unknown names are dropped. */
+function decodeXmlText(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);?/gi, (_, body: string) => {
+    if (body.charAt(0) !== '#') return XML_ENTITIES[body.toLowerCase()] ?? '';
+    const code = /^#x/i.test(body) ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+    return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+  });
+}
+
+/**
+ * The text of every `<text>` element of an svg drawing the way it is drawn: the pieces
+ * (tspans, text paths, character references, CDATA) run together with nothing put between
+ * them. `svgTextContent` reads "s" and "ex" in two tspans as two words; a browser draws one.
+ */
+export function svgTextRuns(svg: string): string[] {
+  const runs: string[] = [];
+  for (const match of svg.matchAll(/<text(?![\w:.-])[^>]*>([\s\S]*?)<\/text\s*>/gi)) {
+    const run = decodeXmlText(
+      (match[1] ?? '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+        .replace(/<[^>]*>/g, ''),
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (run !== '') runs.push(run);
+  }
+  return runs;
 }
 
 type Labelled = { label: string; emoji?: string | undefined };
@@ -354,6 +436,8 @@ export function challengeTexts(c: Challenge): string[] {
     if (object.svg) {
       const text = svgTextContent(object.svg);
       if (text !== '') out.push(text);
+      // Also the way a browser draws it: a word split over tspans is one word.
+      for (const run of svgTextRuns(object.svg)) if (run !== text) out.push(run);
     }
   }
   return out.filter((text) => typeof text === 'string' && text.trim() !== '');
@@ -366,6 +450,20 @@ export function checkTexts(texts: readonly string[], strictness: Strictness): Sa
     if (!result.safe) return result;
   }
   return SAFE;
+}
+
+/**
+ * The blocklist over every text of a challenge, on the device and at once. For content
+ * that was approved earlier and is about to be shown to a child whose rules may differ
+ * from the ones it was approved under (a library item made for a sibling, a queued
+ * challenge after the parent turned strictness up). Never throws.
+ */
+export function localChallengeSafety(c: Challenge, strictness: Strictness): SafetyVerdict {
+  try {
+    return checkTexts(challengeTexts(c), strictness);
+  } catch {
+    return { safe: false, reason: 'the challenge could not be read' };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +549,15 @@ export async function checkChallengeSafety(c: Challenge, strictness: Strictness)
   }
   const local = checkTexts(texts, strictness);
   if (!local.safe) return local;
+  return moderateTexts(texts, strictness);
+}
+
+/**
+ * The second opinion for free-form AI text that already passed the blocklist (a tutor's chat
+ * reply, a story): the endpoint's moderation service, when it has one. Safe when there is no
+ * such service or it is down, so an outage never blocks play. Never throws.
+ */
+export async function moderateTexts(texts: readonly string[], strictness: Strictness): Promise<SafetyVerdict> {
   try {
     const remote = await moderate(texts.join('\n').slice(0, 8000), strictness);
     if (remote && !remote.safe) return remote;

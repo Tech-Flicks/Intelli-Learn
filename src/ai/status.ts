@@ -4,8 +4,9 @@
  */
 import type { AiProvider } from '@/core/types';
 import { checkBudget } from '@/data';
-import { budgetMessage, chat } from './client';
+import { budgetMessage, chat, timeoutScale, TRUNCATED_CODE } from './client';
 import { isLocalAddress, loadAiConfig, type AiConfig, type AiConfigOverride } from './config';
+import { recentAiResults, summarizeAiResults } from './diagnostics';
 import { AiError } from './errors';
 import { extractJsonObject } from './json';
 
@@ -21,10 +22,34 @@ export async function getAiStatus(): Promise<{ provider: AiProvider; ready: bool
     return { provider, ready: false, reason: 'The AI usage counters could not be read on this device.' };
   }
   const how = provider === 'proxy' ? 'through the proxy' : 'directly from this device';
-  return { provider, ready: true, reason: `AI challenges are on, using the model "${loaded.config.chatModel}" ${how}.` };
+  const on = `AI challenges are on, using the model "${loaded.config.chatModel}" ${how}.`;
+  return { provider, ready: true, reason: `${on}${await recentTrouble()}` };
 }
 
+/** Failed builds in a row before the status says so. */
+const TROUBLE_AFTER = 3;
+
+/**
+ * A sentence for the status when the latest challenge builds all failed: "on" must not be all a
+ * parent reads while every challenge comes from the built-in bank. '' when all is well.
+ */
+async function recentTrouble(): Promise<string> {
+  const now = Date.now();
+  const entries = await recentAiResults();
+  const summary = summarizeAiResults(entries, now);
+  if (summary.failuresInARow < TROUBLE_AFTER) return '';
+  const last = [...entries].reverse().find((entry) => (entry.task === 'challenge' || entry.task === 'remix') && entry.outcome !== 'ok');
+  const why = last && last.message !== '' ? ` Latest problem: ${last.message}` : '';
+  const pause = summary.pause
+    ? ` The AI is not asked again for about ${Math.max(1, Math.ceil((summary.pause.until - now) / 60_000))} minutes, so that failed tries do not use up the request budget.`
+    : '';
+  return ` But the last ${summary.failuresInARow} challenges could not be built by the AI, so built-in challenges were used instead.${why}${pause}`;
+}
+
+/** Time limit of the connection test for a hosted service; a slow endpoint gets a multiple (`timeoutScale`). */
 const TEST_TIMEOUT_MS = 15_000;
+/** Enough for {"ok": true}; a model that thinks first gets more from the client. */
+const TEST_MAX_TOKENS = 60;
 
 const BLOCKED_HINT =
   'If the address is right, the browser may be blocking it. A local server such as Ollama must allow this site (set OLLAMA_ORIGINS, then restart it), or use the proxy mode, which avoids the problem.';
@@ -90,7 +115,11 @@ export function explainConnectionError(error: unknown, config: AiConfig): string
       return 'The AI service answered, but it is limiting requests or the account has no credit left (HTTP 429). Check the plan and billing of the AI account, or try again in a minute.';
     case 'network':
       if (error.timedOut) {
-        return `The AI service did not answer within ${TEST_TIMEOUT_MS / 1000} seconds. Check the address, or try a smaller, faster model.`;
+        const seconds = Math.round((TEST_TIMEOUT_MS * timeoutScale(config)) / 1000);
+        if (config.provider === 'direct' && isLocalAddress(config.baseUrl)) {
+          return `The AI service did not answer within ${seconds} seconds. A model on your own computer can take that long to load the first time: run the test once more. If it keeps happening, try a smaller, faster model.`;
+        }
+        return `The AI service did not answer within ${seconds} seconds. Check the address, or try a smaller, faster model.`;
       }
       if (error.status !== null) {
         return `The AI service is reachable but reported a problem of its own (HTTP ${error.status}). Try again in a moment.`;
@@ -103,6 +132,10 @@ export function explainConnectionError(error: unknown, config: AiConfig): string
       }
       return `The AI service could not be reached. Check the address and the internet connection. ${BLOCKED_HINT}${isPlainHttpElsewhere(config) ? ` ${PLAIN_HTTP_HINT}` : ''}`;
     case 'bad-response':
+      if (error.code === TRUNCATED_CODE) {
+        // The address, the key and the model name are all right: do not send the parent looking there.
+        return `The service and the model "${config.chatModel}" answered, but the model spent its whole answer allowance on "thinking" and wrote nothing. The address and the key are fine. Choose a model without long thinking, or switch thinking off (or to low) for this model at the AI service.`;
+      }
       if (modelMissing) {
         return `The service is reachable, but it does not know the model "${config.chatModel}". Check the spelling of the model name${isLocalAddress(config.baseUrl) ? ', and that the model is downloaded on the local server' : ''}.`;
       }
@@ -142,7 +175,7 @@ export async function testConnection(
         { role: 'system', content: 'This is a connection test. Reply with one JSON object and nothing else.' },
         { role: 'user', content: 'Reply with exactly this JSON: {"ok": true}' },
       ],
-      { config, json: true, maxTokens: 60, temperature: 0, timeoutMs: TEST_TIMEOUT_MS, transportRetries: 0, skipBudget: true },
+      { config, json: true, maxTokens: TEST_MAX_TOKENS, temperature: 0, timeoutMs: TEST_TIMEOUT_MS, transportRetries: 0, skipBudget: true },
     );
     const latencyMs = Date.now() - started;
     if (extractJsonObject(result.content) === undefined) {

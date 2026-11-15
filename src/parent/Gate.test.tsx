@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { db, getSettings, listChildren } from '@/data';
-import { hasAdminPassword, useParentGate } from '@/security';
+import { getResetRequest, hasAdminPassword, requestReset, RESET_REQUEST_KEY, RESET_WAIT_MS, useParentGate } from '@/security';
 import { countdownText } from './Gate';
 import { addChild, freshDevice, renderParent, sampleLibraryItem, TEST_PASSWORD } from './testSupport';
 
@@ -82,11 +82,75 @@ describe('parent gate', () => {
     await waitFor(() => expect(useParentGate.getState().unlocked).toBe(false));
   });
 
-  it('offers a full reset for a forgotten password, behind a typed confirmation', async () => {
+  it('"Forgot password?" deletes nothing: it only starts a 24-hour wait', async () => {
     await db.library.put(sampleLibraryItem('lib-1'));
     renderParent('/parent');
     await screen.findByRole('heading', { name: 'Parent area' });
-    await userEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Forgot password?' }));
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Forgot the password?' });
+    expect(within(dialog).getByText(/A forgotten password cannot be recovered/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/deletes every child profile/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/waiting time of 24 hours/)).toBeInTheDocument();
+    // No word to type and no way to delete anything from here.
+    expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reset everything' })).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start the 24-hour wait' }));
+
+    const notice = await screen.findByTestId('gate-reset-request');
+    expect(within(notice).getByText('A full reset has been asked for.')).toBeInTheDocument();
+    expect(within(notice).getByText(/Enter the parent password. That cancels the reset/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reset everything' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Forgot password?' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+    const request = await getResetRequest();
+    expect(request).not.toBeNull();
+    expect(request!.readyAt - request!.requestedAt).toBe(RESET_WAIT_MS);
+    expect(await listChildren()).toHaveLength(1);
+    expect(await db.library.count()).toBe(1);
+    expect(await hasAdminPassword()).toBe(true);
+    expect(screen.getByTestId('where')).not.toHaveTextContent('/setup');
+  });
+
+  it('keeps showing a running wait, without a way to finish it early', async () => {
+    await db.kv.put({ key: RESET_REQUEST_KEY, value: { requestedAt: Date.now() - RESET_WAIT_MS + 60_000 } });
+    renderParent('/parent');
+    const notice = await screen.findByTestId('gate-reset-request');
+    expect(within(notice).getByText('A full reset has been asked for.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reset everything' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Forgot password?' })).not.toBeInTheDocument();
+    expect(await listChildren()).toHaveLength(1);
+  });
+
+  it('the right password cancels a requested reset', async () => {
+    await db.kv.put({ key: RESET_REQUEST_KEY, value: { requestedAt: Date.now() - 2 * RESET_WAIT_MS } });
+    renderParent('/parent');
+    await screen.findByTestId('gate-reset-request');
+    await tryPassword(TEST_PASSWORD);
+    await screen.findByRole('heading', { name: 'Overview', level: 1 });
+    expect(await getResetRequest()).toBeNull();
+    expect(await listChildren()).toHaveLength(1);
+  });
+
+  it('does not offer "Forgot password?" while the gate is locked after wrong tries', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) await useParentGate.getState().unlock('nope nope');
+    renderParent('/parent');
+    await screen.findByTestId('gate-countdown');
+    expect(screen.getByRole('button', { name: 'Forgot password?' })).toBeDisabled();
+    expect((await requestReset()).ok).toBe(false);
+    expect(await getResetRequest()).toBeNull();
+  });
+
+  it('after the wait, offers the full reset behind a typed confirmation', async () => {
+    await db.library.put(sampleLibraryItem('lib-1'));
+    await db.kv.put({ key: RESET_REQUEST_KEY, value: { requestedAt: Date.now() - RESET_WAIT_MS - 1000 } });
+    renderParent('/parent');
+    await screen.findByRole('heading', { name: 'Parent area' });
+    const notice = await screen.findByTestId('gate-reset-request');
+    expect(within(notice).getByText('The waiting time is over.')).toBeInTheDocument();
+    await userEvent.click(within(notice).getByRole('button', { name: 'Reset everything' }));
 
     const dialog = await screen.findByRole('alertdialog', { name: 'Reset everything?' });
     expect(within(dialog).getByText(/A forgotten password cannot be recovered/)).toBeInTheDocument();
@@ -106,6 +170,7 @@ describe('parent gate', () => {
     expect(await db.library.count()).toBe(0);
     expect(await hasAdminPassword()).toBe(false);
     expect((await getSettings()).setupComplete).toBe(false);
+    expect(await getResetRequest()).toBeNull();
   });
 
   it('sends a device without setup to the wizard', async () => {

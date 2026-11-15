@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dayKey, makeStage } from '@/core/grades';
 import { clampStageToSkill, getSkill } from '@/core/skills';
+import { ChallengeSchema } from '@/core/schemas';
 import { MODES, STRANDS } from '@/core/types';
 import type { AttemptOutcome, AttemptRecord, ChildProfile, RewardRecord, SkillDef, Strand } from '@/core/types';
 import { db } from '@/data';
@@ -21,6 +22,7 @@ import {
   MONDAY,
   resetDb,
   right,
+  sampleContent,
   solve,
   stateFor,
   wrong,
@@ -29,6 +31,7 @@ import { TUNING } from './tuning';
 
 const SATURDAY = MONDAY + 5 * DAY;
 const ADDITION = 'math-addition-subtraction';
+const COUNTING = 'math-counting-cardinality';
 
 const badgeKeys = (rewards: RewardRecord[]): string[] => rewards.filter((r) => r.kind === 'badge').map((r) => r.key);
 
@@ -191,6 +194,9 @@ describe('recordAttempt: idempotency', () => {
     const second = await recordAttempt({ ...input, now: MONDAY + 5000 });
 
     expect(second.attempt).toEqual(first.attempt);
+    // The caller can tell that this call stored nothing, so it does not count the attempt twice elsewhere.
+    expect(first.alreadyRecorded).toBe(false);
+    expect(second.alreadyRecorded).toBe(true);
     expect(second.skillState).toEqual(first.skillState);
     expect(second.masteryDelta).toBe(0);
     expect(second.suggestBreak).toBe(false);
@@ -278,6 +284,67 @@ describe('recordAttempt: mastery and stages', () => {
     expect(hinted.masteryDelta).toBe(-25);
     expect(hinted.stageChanges).toEqual([]);
     expect(hinted.attempt.starsEarned).toBe(1);
+  });
+
+  it('does not pass a concept check that was solved by trying the options one after the other', async () => {
+    const child = await addChild({ grade: '3' });
+    await db.skillStates.put(stateFor(child.id, 'science-matter', 17, { mastery: 85, checkPending: true }));
+    const result = await solve(child.id, {
+      outcome: 'second-try',
+      wrongCount: 3,
+      challenge: { skillId: 'science-matter', purpose: 'check', stage: 17 },
+    });
+    // What happened is still told as it was: no help was used.
+    expect(result.attempt.outcome).toBe('second-try');
+    expect(result.skillState).toMatchObject({
+      stage: 17,
+      mastery: TUNING.mastery.afterCheckWithHelp,
+      checkPending: false,
+      checksPassed: 0,
+    });
+    expect(result.stageChanges).toEqual([]);
+    expect(badgeKeys(result.rewards)).not.toContain('level-up');
+    expect(badgeKeys(result.rewards)).not.toContain('double-checker');
+  });
+
+  it('passes a concept check after one wrong try only when that try did not give the answer away', async () => {
+    const child = await addChild({ grade: 'K' });
+    const twoOptions = ChallengeSchema.parse({
+      ...sampleContent('Which group has more?'),
+      interaction: {
+        kind: 'choice',
+        options: [
+          { id: 'a', label: 'The red group' },
+          { id: 'b', label: 'The blue group' },
+        ],
+        correctIds: ['a'],
+      },
+    });
+    await db.skillStates.put(stateFor(child.id, COUNTING, 4, { mastery: 85, checkPending: true }));
+    const guessed = await solve(child.id, {
+      outcome: 'second-try',
+      challenge: { skillId: COUNTING, purpose: 'check', stage: 4, content: twoOptions },
+    });
+    expect(guessed.skillState).toMatchObject({ stage: 4, checkPending: false, checksPassed: 0 });
+    expect(guessed.skillState.mastery).toBe(TUNING.mastery.afterCheckWithHelp);
+
+    // On a typed number a second try gives nothing away: the check still counts.
+    await db.skillStates.put(stateFor(child.id, COUNTING, 4, { mastery: 85, checkPending: true }));
+    const retried = await solve(child.id, {
+      outcome: 'second-try',
+      now: MONDAY + 1000,
+      challenge: { skillId: COUNTING, purpose: 'check', stage: 4 },
+    });
+    expect(retried.skillState).toMatchObject({ stage: 5, checksPassed: 1 });
+  });
+
+  it('gives an item solved after several wrong tries the mastery of a nudge, not of a second try', async () => {
+    const child = await addChild({ grade: '2' });
+    const once = await solve(child.id, { outcome: 'second-try', challenge: { skillId: ADDITION } });
+    expect(once.masteryDelta).toBe(TUNING.mastery.gain['second-try']);
+    const often = await solve(child.id, { outcome: 'second-try', wrongCount: 3, now: MONDAY + 1000, challenge: { skillId: ADDITION } });
+    expect(often.attempt.outcome).toBe('second-try');
+    expect(often.masteryDelta).toBe(TUNING.mastery.gain.nudge);
   });
 
   it('writes a strand-level change only when the strand aggregate moves', async () => {
@@ -777,9 +844,9 @@ describe('placement, end to end', () => {
     expect(plans.map((p) => p.strand)).toEqual([
       'math', 'science', 'technology', 'engineering', 'logic', 'math', 'science', 'technology',
     ]);
-    // The second math item is pitched at the estimate after the first one: grade 2 growing + 3 steps.
+    // The second math item is pitched at the estimate after the first one: grade 2 growing + 4 steps.
     const secondMath = plans[5];
-    expect(secondMath?.stage).toBe(clampStageToSkill(skillOrThrow(secondMath?.skillId), 16));
+    expect(secondMath?.stage).toBe(clampStageToSkill(skillOrThrow(secondMath?.skillId), 17));
     expect(secondMath?.skillId).not.toBe(plans[0]?.skillId);
 
     expect(await placementStatus(child.id)).toEqual({ done: true, answered: 8, total: 8 });
@@ -790,11 +857,11 @@ describe('placement, end to end', () => {
       ['math', 2], ['science', 2], ['technology', 2], ['engineering', 1], ['logic', 1],
     ]);
     const stageOf = Object.fromEntries(stages.map((s) => [s.strand, s.stage]));
-    // Two independent solves: 13 + 3 + 3 = grade 3, ready. One: 13 + 3 = grade 3, starting.
-    expect(stageOf.math).toBe(makeStage('3', 'ready'));
-    expect(stageOf.science).toBe(makeStage('3', 'ready'));
-    expect(stageOf.engineering).toBe(makeStage('3', 'starting'));
-    expect(stageOf.logic).toBe(makeStage('3', 'starting'));
+    // Two independent solves: 13 + 4 + 4 = grade 4, growing: above the enrolled grade. One: 13 + 4 = grade 3, growing.
+    expect(stageOf.math).toBe(makeStage('4', 'growing'));
+    expect(stageOf.science).toBe(makeStage('4', 'growing'));
+    expect(stageOf.engineering).toBe(makeStage('3', 'growing'));
+    expect(stageOf.logic).toBe(makeStage('3', 'growing'));
 
     const states = await db.skillStates.where('childId').equals(child.id).toArray();
     expect(states.map((s) => s.skillId).sort()).toEqual([...new Set(plans.map((p) => p.skillId))].sort());
@@ -856,7 +923,7 @@ describe('placement, end to end', () => {
 
     const stored = await readPlacement(child.id);
     expect(stored).toMatchObject({ answered: 1, start: { math: 13 }, estimates: { math: 14 } });
-    expect(stored?.attempted).toEqual([{ skillId: plan.skillId, strand: 'math', interaction: plan.interaction }]);
+    expect(stored?.attempted).toEqual([{ skillId: plan.skillId, strand: 'math', interaction: plan.interaction, stage: plan.stage }]);
     expect((await db.kv.get(placementKey(child.id)))?.value).toEqual(stored);
     expect(await db.skillStates.count()).toBe(0);
     expect(await db.stageChanges.count()).toBe(0);
@@ -893,6 +960,34 @@ describe('placement, end to end', () => {
     expect(await db.stageChanges.count()).toBe(2);
   });
 
+  it('with one subject switched on, places within two grades and only asks skills taught at the estimate', async () => {
+    const mathOnly = { strands: { math: true, science: false, technology: false, engineering: false, logic: false } };
+    const strong = await addChild({ grade: '2', placementDone: false, controlsOverride: mathOnly });
+    const up = await playPlacement(strong, 'independent');
+    const start = makeStage('1', 'growing');
+    for (const plan of up.plans) {
+      // Never a skill that had to be asked at another grade than the estimate at that moment.
+      expect(Math.abs(plan.stage - start)).toBeLessThanOrEqual(TUNING.placement.maxMove);
+    }
+    const seededUp = await db.skillStates.where('childId').equals(strong.id).toArray();
+    expect(seededUp.length).toBeGreaterThan(0);
+    for (const state of seededUp) {
+      expect(state.stage).toBeLessThanOrEqual(start + TUNING.placement.maxMove);
+      // No skill starts far from anything the child was asked about it.
+      const asked = up.plans.filter((plan) => plan.skillId === state.skillId).map((plan) => plan.stage);
+      expect(Math.min(...asked.map((stage) => Math.abs(stage - state.stage)))).toBeLessThanOrEqual(TUNING.placement.maxMove);
+    }
+    expect((await getStrandStages(strong.id)).find((s) => s.strand === 'math')?.stage).toBe(makeStage('3', 'growing'));
+
+    const struggling = await addChild({ grade: '5', placementDone: false, controlsOverride: mathOnly });
+    const down = await playPlacement(struggling, 'walkthrough');
+    const low = makeStage('4', 'growing') - TUNING.placement.maxMove;
+    for (const plan of down.plans) expect(plan.stage).toBeGreaterThanOrEqual(low);
+    const seededDown = await db.skillStates.where('childId').equals(struggling.id).toArray();
+    for (const state of seededDown) expect(state.stage).toBeGreaterThanOrEqual(low);
+    expect((await getStrandStages(struggling.id)).find((s) => s.strand === 'math')?.stage).toBe(makeStage('2', 'growing'));
+  });
+
   it('treats a leftover placement item as regular practice once placement is done', async () => {
     const child = await addChild({ grade: '3', placementDone: true });
     const result = await solve(child.id, { challenge: { skillId: SKILL_IN.math, purpose: 'placement' } });
@@ -913,7 +1008,7 @@ describe('placement, end to end', () => {
       now: MONDAY,
     });
     const studio = await solve(child.id, { now: MONDAY + 1, challenge: { skillId: 'math-fractions-decimals', mode: 'studio' } });
-    expect(studio.skillState.stage).toBe(16);
+    expect(studio.skillState.stage).toBe(17);
     expect((await readPlacement(child.id))?.answered).toBe(1);
   });
 });

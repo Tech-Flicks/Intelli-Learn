@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { STRANDS } from '@/core/types';
 import { db, getSettings, listChildren, type BackupFile } from '@/data';
 import { strandName } from '@/i18n';
-import { getApiKey, hasAdminPassword, hasApiKey, setApiKey, useParentGate } from '@/security';
+import { getApiKey, getApiKeyFor, hasAdminPassword, hasApiKey, setApiKey, useParentGate } from '@/security';
 import { addChild, freshDevice, renderParent, sampleLibraryItem, seedAttempt, TEST_PASSWORD } from './testSupport';
 
 const testConnection = vi.hoisted(() => vi.fn());
@@ -148,6 +148,79 @@ describe('settings: AI connection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
     expect(await screen.findByText('AI settings saved.')).toBeInTheDocument();
     expect(await hasApiKey()).toBe(false);
+  });
+
+  describe('a saved key and a newly typed address', () => {
+    const OPENAI = 'https://api.openai.com/v1';
+
+    beforeEach(async () => {
+      const { updateSettings } = await import('@/data');
+      await updateSettings((current) => ({ ...current, ai: { ...current.ai, provider: 'direct', baseUrl: OPENAI, chatModel: 'gpt-4o-mini' } }));
+      await setApiKey('sk-old-key', OPENAI);
+    });
+
+    it('asks for the key of the new service instead of reusing the saved one', async () => {
+      await openSection('ai', 'AI connection');
+      expect(await screen.findByText('A key is saved on this device.')).toBeInTheDocument();
+
+      const address = screen.getByLabelText(/^Service address/);
+      await userEvent.clear(address);
+      await userEvent.type(address, 'https://collector.example/v1');
+      // The saved key is not offered for this address: the form wants a key for it.
+      expect(await screen.findByTestId('key-other-address')).toHaveTextContent(/entered for another address/);
+      expect(screen.queryByText('A key is saved on this device.')).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/^API key/)).toHaveValue('');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+      expect(await screen.findByText(/Enter the API key of the service/)).toBeInTheDocument();
+      expect((await getSettings()).ai.baseUrl).toBe(OPENAI);
+      expect(await getApiKeyFor(OPENAI)).toBe('sk-old-key');
+
+      await userEvent.type(screen.getByLabelText(/^API key/), 'sk-new-key');
+      await userEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+      expect(await screen.findByText('AI settings saved.')).toBeInTheDocument();
+      expect((await getSettings()).ai.baseUrl).toBe('https://collector.example/v1');
+      expect(await getApiKeyFor('https://collector.example/v1')).toBe('sk-new-key');
+      expect(await getApiKeyFor(OPENAI)).toBeNull();
+    });
+
+    it('keeps the saved key when only the path of the address changes', async () => {
+      await openSection('ai', 'AI connection');
+      await screen.findByText('A key is saved on this device.');
+      const address = screen.getByLabelText(/^Service address/);
+      await userEvent.clear(address);
+      await userEvent.type(address, 'https://api.openai.com/v2');
+      expect(screen.getByText('A key is saved on this device.')).toBeInTheDocument();
+      expect(screen.queryByTestId('key-other-address')).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+      expect(await screen.findByText('AI settings saved.')).toBeInTheDocument();
+      expect(await getApiKeyFor('https://api.openai.com/v2')).toBe('sk-old-key');
+    });
+
+    it('removes the saved key when a server that needs none takes its place', async () => {
+      await openSection('ai', 'AI connection');
+      await screen.findByText('A key is saved on this device.');
+      const address = screen.getByLabelText(/^Service address/);
+      await userEvent.clear(address);
+      await userEvent.type(address, 'http://localhost:11434/v1');
+      await userEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+      expect(await screen.findByText('AI settings saved.')).toBeInTheDocument();
+      expect((await getSettings()).ai.baseUrl).toBe('http://localhost:11434/v1');
+      expect(await hasApiKey()).toBe(false);
+    });
+
+    it('keeps the key with its service through another mode, also a key saved before addresses were remembered', async () => {
+      await setApiKey('sk-old-key'); // no address written down
+      await openSection('ai', 'AI connection');
+      await screen.findByText('A key is saved on this device.');
+      await userEvent.click(screen.getByRole('radio', { name: /proxy/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+      expect(await screen.findByText('AI settings saved.')).toBeInTheDocument();
+      expect((await getSettings()).ai.provider).toBe('proxy');
+      // Still the key of the service it was entered for, and of no other.
+      expect(await getApiKeyFor(OPENAI)).toBe('sk-old-key');
+      expect(await getApiKeyFor('https://collector.example/v1')).toBeNull();
+    });
   });
 
   it('needs a real address, and a key unless the service is on the local network', async () => {

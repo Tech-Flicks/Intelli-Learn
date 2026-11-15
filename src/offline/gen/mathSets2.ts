@@ -101,8 +101,25 @@ export function moreMathSets(ctx: Ctx): KnowledgeSet[] {
   }
 
   // --- Sums that make a target ---
-  if (g <= 5) {
-    const target = g === 0 ? 3 : g === 1 ? 5 : g === 2 ? 10 : g === 3 ? 20 : g === 4 ? 100 : 1000;
+  // Pre-K and Kindergarten add with objects: each card shows two small groups of counters, the
+  // total is never more than 5, and no sum is written out.
+  if (g <= 1) {
+    const target = g === 0 ? 3 : 5;
+    const groups = Array.from({ length: 4 }, (_a, i) => i + 1).flatMap((a) => Array.from({ length: 5 - a }, (_b, j) => ({ a, b: j + 1 })));
+    const card = ({ a, b }: { a: number; b: number }) => ({ label: `${a} plus ${b}`, emoji: `${'🔴'.repeat(a)}${'🔷'.repeat(b)}`, wide: true });
+    out.push({
+      ...base(ctx, 'makes', ['math-addition-subtraction']), type: 'cat', title: titleOf(ctx, `Make ${target}`),
+      intro: `Some cards make ${target}.`,
+      hint: 'Count all the shapes on a card.',
+      explain: 'Different groups can make the same total.',
+      teach: ['What does adding do?', 'It puts groups together.', 'It takes some away.', 'It hides things.'],
+      bins: [
+        { label: `Makes ${target}`, emoji: '✅', one: `a card that makes ${target}`, many: `cards that make ${target}`, rule: `These cards have ${target} shapes in all.`, items: rng.shuffle(groups.filter(({ a, b }) => a + b === target)).map(card) },
+        { label: 'Does not', emoji: '❌', one: `a card that does not make ${target}`, many: `cards that do not make ${target}`, rule: 'These cards have a different number of shapes.', items: rng.sample(groups.filter(({ a, b }) => a + b !== target), 4).map(card) },
+      ],
+    } satisfies CatSet);
+  } else if (g <= 5) {
+    const target = g === 2 ? 10 : g === 3 ? 20 : g === 4 ? 100 : 1000;
     const stepSize = target >= 100 ? target / 20 : 1;
     const hits = rng.sample(Array.from({ length: Math.max(2, Math.min(9, target / stepSize - 1)) }, (_v, i) => (i + 1) * stepSize), Math.min(4, target - 1 > 3 ? 4 : 2)).map((a) => `${fmt(a)} + ${fmt(target - a)}`);
     const misses = rng
@@ -115,13 +132,12 @@ export function moreMathSets(ctx: Ctx): KnowledgeSet[] {
       .filter((m, i, all) => m.sum !== target && all.findIndex((other) => other.label === m.label) === i)
       .slice(0, 4)
       .map((m) => m.label);
-    const young = g <= 1;
     out.push({
       ...base(ctx, 'makes', ['math-addition-subtraction']), type: 'cat', title: titleOf(ctx, `Make ${fmt(target)}`),
-      intro: young ? `Some sums make ${target}.` : `Number partners that make ${fmt(target)} are handy for quick adding.`,
-      hint: young ? 'Use your fingers to add.' : 'Work out each sum, then compare it with the target.',
-      explain: young ? 'Different numbers can make the same total.' : `Many different pairs of numbers add up to ${fmt(target)}.`,
-      teach: young ? ['What does adding do?', 'It puts groups together.', 'It takes some away.', 'It hides things.'] : ['Why learn number partners?', 'They make mental math faster.', 'They make numbers bigger.', 'They are the only sums.'],
+      intro: `Number partners that make ${fmt(target)} are handy for quick adding.`,
+      hint: 'Work out each sum, then compare it with the target.',
+      explain: `Many different pairs of numbers add up to ${fmt(target)}.`,
+      teach: ['Why learn number partners?', 'They make mental math faster.', 'They make numbers bigger.', 'They are the only sums.'],
       bins: [
         { label: `Makes ${fmt(target)}`, emoji: '✅', one: `a sum that makes ${fmt(target)}`, many: `sums that make ${fmt(target)}`, rule: 'The two numbers add up to the target.', items: hits.map((label) => ({ label })) },
         { label: 'Does not', emoji: '❌', one: `a sum that does not make ${fmt(target)}`, many: `sums that do not make ${fmt(target)}`, rule: 'The two numbers add up to a different total.', items: misses.map((label) => ({ label })) },

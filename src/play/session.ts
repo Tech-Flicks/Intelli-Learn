@@ -34,11 +34,13 @@ import type {
 } from '@/core/types';
 import { db, getSettings, updateChild } from '@/data';
 import { generateLearnerNotes, localSafetyCheck, tutorReply, type ChildContext, type TutorRequest } from '@/ai';
-import type { Answer, CheckResult } from '@/engine';
+import { checkAnswer, type Answer, type CheckResult } from '@/engine';
 import { t } from '@/i18n';
 import { recordLibraryOutcome } from '@/library';
 import { pickOfflineChallenge } from '@/offline';
 import {
+  answerSpace,
+  creditedOutcome,
   detectFrustration,
   effectiveControls,
   endSession,
@@ -48,6 +50,7 @@ import {
   recordAttempt,
   startSession,
   tickSession,
+  type RecordedAttempt,
 } from '@/progression';
 import { cancelListening, speak, stopSpeaking } from '@/voice';
 import {
@@ -61,6 +64,7 @@ import {
   helpToOffer,
   highlightsFor,
   hintLevelOf,
+  isRepeatedSubmit,
   isSolved,
   lastResortPlan,
   notesRow,
@@ -84,7 +88,7 @@ import {
   type Run,
 } from './machine';
 import { LINE_COUNTS } from './strings';
-import { advanceStory, buildContext, ensureQueue, makeSibling, prepareConceptCheck, takeNext } from './supply';
+import { advanceStory, buildContext, ensureQueue, makeSibling, prepareConceptCheck, stillAllowed, takeNext } from './supply';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -163,6 +167,8 @@ export interface PlaySessionData {
   panelOpen: boolean;
   /** Pip sits in his home spot next to the question. */
   botDocked: boolean;
+  /** Room in pixels that the Check bar keeps free at its right end, while Pip rests next to it (0: none). */
+  botInset: number;
 
   // --- moments ---
   breakOpen: boolean;
@@ -220,6 +226,7 @@ export interface PlaySessionActions {
   setVoiceRate(rate: number): void;
   setPanelOpen(open: boolean): void;
   setBotDocked(docked: boolean): void;
+  setBotInset(inset: number): void;
   closeBreak(): void;
   continueAfterSolved(): void;
   answerTeachBack(optionId: string): Promise<void>;
@@ -241,9 +248,11 @@ export interface PlayDeps {
   now: () => number;
   /** Random number in [0, 1). */
   random: () => number;
+  /** How long a hint or a walkthrough step waits for the tutor: `PLAY.helpWaitMs`. */
+  helpWaitMs: number;
 }
 
-const DEFAULT_DEPS: PlayDeps = { now: () => Date.now(), random: () => Math.random() };
+const DEFAULT_DEPS: PlayDeps = { now: () => Date.now(), random: () => Math.random(), helpWaitMs: PLAY.helpWaitMs };
 let deps: PlayDeps = DEFAULT_DEPS;
 
 /** Replaces the clock and the random source (tests). `null` restores the real ones. */
@@ -273,10 +282,16 @@ interface Runtime {
   mood: PipState | null;
   thinking: number;
   record: Promise<void> | null;
+  /** The latest write of the run to `kv`: the run is only removed after it. */
+  saving: Promise<void> | null;
   sibling: Promise<void> | null;
   breakShown: boolean;
   wrongLines: number;
   speakSeq: number;
+  /** The challenge on the screen is an unfinished one that came back instead of the world or mode that was asked for. */
+  finishFirst: boolean;
+  /** The studio idea that was asked for could not be drawn: this canvas is a ready-made one, and Pip says so. */
+  readyMade: boolean;
 }
 
 const rt: Runtime = {
@@ -296,10 +311,13 @@ const rt: Runtime = {
   mood: null,
   thinking: 0,
   record: null,
+  saving: null,
   sibling: null,
   breakShown: false,
   wrongLines: 0,
   speakSeq: 0,
+  finishFirst: false,
+  readyMade: false,
 };
 
 const RUN_START = {
@@ -345,6 +363,7 @@ const INITIAL: PlaySessionData = {
   voiceRate: 1,
   panelOpen: false,
   botDocked: true,
+  botInset: 0,
   celebrate: 0,
   resetKey: 0,
   controls: null,
@@ -380,6 +399,8 @@ export const usePlaySession = create<PlaySessionState>()(() => ({
   setVoiceRate,
   setPanelOpen: (open) => apply({ panelOpen: open }),
   setBotDocked: (docked) => apply({ botDocked: docked }),
+  // Where Pip rests says nothing about his face: plain state, nothing to work out again.
+  setBotInset: (inset) => usePlaySession.setState({ botInset: Math.max(0, Math.round(inset)) }),
   closeBreak: () => apply({ breakOpen: false }),
   continueAfterSolved,
   answerTeachBack,
@@ -540,8 +561,14 @@ function recentHistory(messages: readonly BotMessage[]): { role: 'child' | 'bot'
 type TutorPart = Pick<TutorRequest, 'intent' | 'hintLevel'> &
   Partial<Pick<TutorRequest, 'walkthroughStep' | 'wrongAnswerSummary' | 'misconception' | 'childText' | 'signal'>>;
 
-/** Asks the tutor about the current challenge. Null when the answer came too late to matter. */
-async function askTutor(part: TutorPart, showThinking = true): Promise<TutorReply | null> {
+/**
+ * Asks the tutor about the current challenge. Null when the answer came too late to matter.
+ *
+ * With `patienceMs` the child is not kept waiting for a slow model: when the time is up the
+ * request is given up, and the tutor answers on the device from the challenge's own hints and
+ * steps. (An aborted signal is how `tutorReply` is asked for its on-device reply.)
+ */
+async function askTutor(part: TutorPart, showThinking = true, patienceMs: number | null = null): Promise<TutorReply | null> {
   const s = get();
   const record = s.challenge;
   const context = rt.context;
@@ -552,14 +579,33 @@ async function askTutor(part: TutorPart, showThinking = true): Promise<TutorRepl
     apply({ thinking: true });
   }
   let reply: TutorReply | null = null;
+  const request: TutorRequest = {
+    child: context,
+    challenge: record.content,
+    openChat: s.controls?.openChat === true,
+    history: recentHistory(s.messages),
+    ...part,
+  };
   try {
-    reply = await tutorReply({
-      child: context,
-      challenge: record.content,
-      openChat: s.controls?.openChat === true,
-      history: recentHistory(s.messages),
-      ...part,
-    });
+    if (patienceMs === null) {
+      reply = await tutorReply(request);
+    } else {
+      const controller = new AbortController();
+      const patient = { ...request, signal: controller.signal };
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const tooLate = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), patienceMs);
+      });
+      // A failed request counts as an answer too: `tutorReply` never throws, and a throw is no reason to wait on.
+      const inTime = await Promise.race([tutorReply(patient).catch(() => null), tooLate]);
+      if (timer !== null) clearTimeout(timer);
+      if (inTime) {
+        reply = inTime;
+      } else {
+        controller.abort();
+        reply = await tutorReply(patient);
+      }
+    }
   } catch {
     reply = null;
   }
@@ -595,10 +641,33 @@ function stopActive(at: number): void {
   rt.activeMark = null;
 }
 
+/**
+ * Counts one tick of play time. The session of this screen can be ended from outside (the
+ * play screen was opened in another tab, and that tab was left again): the time would then
+ * be counted nowhere and the daily limit would never be reached. So when the tick was not
+ * counted, this screen opens a new session and counts there.
+ */
+async function countTick(sessionId: string, at: number): Promise<void> {
+  const counted = await quiet(tickSession(sessionId, PLAY.sessionTickMs, at));
+  if (counted !== false || rt.sessionId !== sessionId) return;
+  const childId = get().childId;
+  if (!childId) return;
+  const token = rt.token;
+  const session = await quiet(startSession(childId, at));
+  if (!session) return;
+  if (token !== rt.token || rt.sessionId !== sessionId) {
+    // The child left (or another tick got here first) in the meantime.
+    void quiet(endSession(session.id, now()));
+    return;
+  }
+  rt.sessionId = session.id;
+  await quiet(tickSession(session.id, PLAY.sessionTickMs, at));
+}
+
 function onTick(): void {
   const at = now();
   if (!pageVisible() || at - rt.lastInteractionAt > PLAY.activeWindowMs || rt.sessionId === null) return;
-  void quiet(tickSession(rt.sessionId, PLAY.sessionTickMs, at));
+  void countTick(rt.sessionId, at);
   rt.ticks += 1;
   // Once a minute: how much time is left, so Pip can look tired near the end. Never interrupts a challenge.
   if (rt.ticks % 4 === 0) void refreshAllowance();
@@ -667,35 +736,81 @@ const mutedKey = (childId: string): string => `bot-muted:${childId}`;
 
 interface StoredRun {
   v: 1;
+  /** The wrong tries. */
   answers: AnswerEvent[];
   hintsUsed: 0 | 1 | 2;
   walkthroughUsed: boolean;
   activeMs: number;
+  /**
+   * The right answer, once it was given. From then on the challenge is solved and only waits for
+   * its teach-back and for the attempt to be stored: a page that is reloaded or closed in that
+   * moment must not make the child solve it a second time.
+   */
+  solvedBy?: AnswerEvent;
+  /** Whether the teach-back was promised when the challenge was solved. */
+  willTeachBack?: boolean;
 }
 
-async function persistRun(): Promise<void> {
+interface RestoredRun {
+  run: Run;
+  activeMs: number;
+  /** Null for a run that is still open. */
+  willTeachBack: boolean | null;
+}
+
+/** Solved, and the attempt is not stored yet. */
+function awaitsRecording(s: PlaySessionData): boolean {
+  return s.challenge !== null && (s.phase === 'solved' || s.phase === 'teachback');
+}
+
+function persistRun(): Promise<void> {
   const s = get();
-  if (!s.challenge || !isOpen(s)) return;
+  const record = s.challenge;
+  // Once the attempt is being stored it takes over: the run is removed when it is in the database.
+  if (!record || rt.record !== null || (!isOpen(s) && !awaitsRecording(s))) return Promise.resolve();
+  const solvedBy = awaitsRecording(s) ? s.answers.find((answer) => answer.correct) : undefined;
   const value: StoredRun = {
     v: 1,
     answers: s.answers.filter((answer) => !answer.correct),
     hintsUsed: s.hintsUsed,
     walkthroughUsed: s.walkthroughUsed,
     activeMs: rt.activeMs,
+    ...(solvedBy ? { solvedBy, willTeachBack: s.willTeachBack } : {}),
   };
-  await quiet(db.kv.put({ key: runKey(s.challenge), value }));
+  const saving = quiet(db.kv.put({ key: runKey(record), value })).then(() => undefined);
+  rt.saving = saving;
+  return saving;
 }
 
-async function restoreRun(record: ChallengeRecord): Promise<{ run: Run; activeMs: number } | null> {
+/** True when a kept "solved" answer really solves the challenge. What is in `kv` is never taken for granted: there is no skipping. */
+function reallySolves(record: ChallengeRecord, event: AnswerEvent): boolean {
+  try {
+    return checkAnswer(record.content.interaction, event.answer as Answer).correct;
+  } catch {
+    return false;
+  }
+}
+
+async function restoreRun(record: ChallengeRecord): Promise<RestoredRun | null> {
   const stored = (await quiet(db.kv.get(runKey(record))))?.value as Partial<StoredRun> | undefined;
   if (!stored || stored.v !== 1 || !Array.isArray(stored.answers)) return null;
   const answers = stored.answers.filter(
     (answer): answer is AnswerEvent => typeof answer === 'object' && answer !== null && answer.correct === false && typeof answer.at === 'number',
   );
   const hintsUsed = stored.hintsUsed === 1 || stored.hintsUsed === 2 ? stored.hintsUsed : 0;
+  const last = stored.solvedBy;
+  const solvedBy =
+    typeof last === 'object' && last !== null && last.correct === true && typeof last.at === 'number' && reallySolves(record, last) ? last : null;
   return {
-    run: { answers, hintsUsed, walkthroughUsed: stored.walkthroughUsed === true, walkthroughStep: 0, walkthroughOpen: false },
+    run: {
+      answers: solvedBy ? [...answers, solvedBy] : answers,
+      hintsUsed,
+      walkthroughUsed: stored.walkthroughUsed === true,
+      walkthroughStep: 0,
+      walkthroughOpen: false,
+    },
     activeMs: typeof stored.activeMs === 'number' && Number.isFinite(stored.activeMs) ? Math.max(0, stored.activeMs) : 0,
+    willTeachBack: solvedBy ? stored.willTeachBack === true : null,
   };
 }
 
@@ -709,6 +824,7 @@ async function start(childId: string, request: PlayRequest = {}): Promise<void> 
   clearTimers();
   rt.sibling = null;
   rt.record = null;
+  rt.saving = null;
   rt.thinking = 0;
   usePlaySession.setState({ ...INITIAL, childId, request, phase: 'loading', botState: 'thinking' });
 
@@ -754,7 +870,7 @@ async function leave(): Promise<void> {
   // A solved challenge is recorded even when the child leaves before the reward moment;
   // an unsolved one keeps the help that was used, for when the child comes back.
   // Both start here, before anything is awaited, while the store still holds the run.
-  const solved = s.challenge !== null && (s.phase === 'solved' || s.phase === 'teachback');
+  const solved = awaitsRecording(s);
   if (solved) void recordOnce(s.teachBack?.correct ?? null);
   const saved = solved ? Promise.resolve() : persistRun();
 
@@ -785,7 +901,11 @@ async function leave(): Promise<void> {
  */
 async function fallbackChallenge(child: ChildProfile): Promise<ChallengeRecord> {
   const active = (await quiet(db.challenges.where('[childId+status]').equals([child.id, 'active']).toArray())) ?? [];
-  const unfinished = active.sort((a, b) => (a.startedAt ?? a.createdAt) - (b.startedAt ?? b.createdAt))[0];
+  // Not one whose subject or kind the parent switched off, or that no longer passes the child's content rules.
+  const settings = await quiet(getSettings());
+  const unfinished = active
+    .filter((item) => settings !== undefined && stillAllowed(item, child, settings))
+    .sort((a, b) => (a.startedAt ?? a.createdAt) - (b.startedAt ?? b.createdAt))[0];
   if (unfinished) return unfinished;
 
   const planned: ChallengePlan[] = (await quiet(planNext(child.id, 1, { now: now() }))) ?? [];
@@ -851,16 +971,22 @@ async function loadChallenge(token: number): Promise<void> {
   apply({ ...RUN_START, challenge: null, phase: 'loading' });
 
   let record: ChallengeRecord;
+  const asked = get().request;
+  const askedAt = now();
   try {
     // After a walkthrough the easier sibling has to be in the queue before the next one is taken.
     const sibling = rt.sibling;
     rt.sibling = null;
     if (sibling) await sibling;
-    record = await takeNext(childId, get().request);
+    record = await takeNext(childId, asked);
   } catch {
     record = await fallbackChallenge(child);
   }
   if (token !== rt.token) return;
+  // There is no skipping: an unfinished challenge comes back whatever world or mode was opened.
+  // What was asked for is kept, and is served once this one is finished.
+  const finishFirst = cameBackInstead(record, asked, askedAt);
+  rt.finishFirst = finishFirst;
   void ensureQueue(childId);
 
   const restored = await restoreRun(record);
@@ -869,33 +995,59 @@ async function loadChallenge(token: number): Promise<void> {
   if (token !== rt.token) return;
 
   const s = get();
-  // A studio idea is drawn once: afterwards play goes on as usual.
-  const usedIdea = s.request.mode === 'studio';
+  // A studio idea is drawn once: afterwards play goes on as usual. It is kept while an
+  // unfinished challenge has to be finished first.
+  const usedIdea = s.request.mode === 'studio' && !finishFirst;
+  // Only the AI can draw an idea. Without it (Demo mode, a spent budget, a slow or failed request)
+  // the canvas is a ready-made challenge: Pip says so, so the child does not think the idea was this.
+  rt.readyMade = usedIdea && (asked.idea !== undefined || asked.pick !== undefined) && record.mode === 'studio' && record.source !== 'ai';
   rt.activeMs = restored?.activeMs ?? 0;
   const at = now();
   rt.lastInteractionAt = at;
-  rt.activeMark = pageVisible() ? at : null;
+  // The child solved this one before the page went away: it is not asked a second time.
+  const solvedBefore = restored !== null && restored.willTeachBack !== null && isSolved(restored.run);
+  rt.activeMark = pageVisible() && !solvedBefore ? at : null;
   apply({
     ...(restored ? runPatch(restored.run) : {}),
     challenge: record,
     story,
     placement: placement && !placement.done ? { answered: placement.answered, total: placement.total } : null,
-    phase: story ? 'story' : 'presenting',
+    phase: solvedBefore ? 'solved' : story ? 'story' : 'presenting',
     resetKey: s.resetKey + 1,
     ...(usedIdea ? { request: {}, urlReset: s.urlReset + 1 } : {}),
   });
+  if (solvedBefore) {
+    showSolved(record, restored.run, restored.willTeachBack === true, false);
+    return;
+  }
   armIdle(at);
   introduce();
 }
 
 /** Pip's hello for a new challenge, and the read-aloud for a child who is read to. */
+/**
+ * True when `record` was already started before it was asked for and is not what was asked
+ * for: an unfinished challenge that the supply gave back instead of another world or mode.
+ */
+function cameBackInstead(record: ChallengeRecord, asked: PlayRequest, askedAt: number): boolean {
+  if ((record.startedAt ?? record.createdAt) >= askedAt) return false;
+  const mode = asked.mode !== undefined && asked.mode !== 'quest' ? asked.mode : undefined;
+  // An unfinished canvas is not the idea that was just asked for: the new idea is kept for afterwards.
+  if (mode === 'studio' && record.mode === 'studio' && (asked.idea !== undefined || asked.pick !== undefined)) return true;
+  return (mode !== undefined && record.mode !== mode) || (asked.strand !== undefined && record.strand !== asked.strand);
+}
+
 function introduce(): void {
   const s = get();
   const record = s.challenge;
   if (!record) return;
+  // Pip says why this one is here when the child opened another world or mode.
+  // ... or that this canvas is a ready-made one when the studio idea could not be drawn.
+  const first = rt.finishFirst ? t('play.finishFirst') : rt.readyMade ? t('play.studio.readyMade') : '';
+  if (first !== '') botSay(first, 'chat', { voice: 'never' });
   if (s.phase === 'story' && s.story) {
     playMoods([]);
-    readAloud(`${s.story.heading}. ${s.story.narrative}`, 'auto');
+    readAloud(`${first} ${s.story.heading}. ${s.story.narrative}`.trim(), 'auto');
     return;
   }
   let opening = '';
@@ -914,7 +1066,7 @@ function introduce(): void {
   }
   // The star challenge is already written on the card: Pip only adds it to the conversation (and reads it).
   if (opening !== '') botSay(opening, 'chat', { voice: 'never', bubble: record.purpose !== 'check' });
-  readAloud(`${opening} ${record.content.readAloud}`.trim(), 'auto');
+  readAloud([first, opening, record.content.readAloud].filter((part) => part !== '').join(' ').trim(), 'auto');
 }
 
 /** Reads text aloud and notes it in the transcript. `auto` only for a child who is read to. */
@@ -951,6 +1103,8 @@ function submitAnswer(answer: Answer, result: CheckResult): void {
   const at = now();
   rt.lastInteractionAt = at;
   flushActive(at);
+  // A double tap on Check: the same wrong answer is one try, and Pip has already said his line.
+  if (!result.correct && isRepeatedSubmit(runOf(s), answer, at)) return;
   const run = withAnswer(runOf(s), answerEvent(answer, result, at));
   if (result.correct) {
     apply(runPatch(run));
@@ -983,31 +1137,52 @@ async function wrongFeedback(record: ChallengeRecord, run: Run, answer: Answer, 
   const lineId = get().botLineId + 1;
   apply({ botLine: local, botLineId: lineId, botLineSticky: offer !== null, botOffer: offer, helpOffered: offer !== null });
 
+  // When the challenge itself says what is behind this mistake (the option's misconception), that
+  // is what the child hears: the tutor answers on the device, and no AI request is spent on
+  // rewording it. (An aborted signal is how `tutorReply` is asked for its on-device reply.)
+  const known = (result.misconception ?? '').trim() !== '';
   const controller = new AbortController();
-  const reply = await Promise.race([
-    askTutor(
-      {
-        intent: 'wrong-answer',
-        hintLevel: hintLevelOf(run),
-        misconception: result.misconception,
-        wrongAnswerSummary: describeAnswer(interaction, answer),
-        signal: controller.signal,
-      },
-      false,
-    ),
-    wait(PLAY.feedbackWaitMs).then(() => null),
-  ]);
-  controller.abort();
+  if (known) controller.abort();
+  const asking = askTutor(
+    {
+      intent: 'wrong-answer',
+      hintLevel: hintLevelOf(run),
+      misconception: result.misconception,
+      wrongAnswerSummary: describeAnswer(interaction, answer),
+      signal: controller.signal,
+    },
+    false,
+  );
+  const reply = await Promise.race([asking, wait(PLAY.feedbackWaitMs).then(() => null)]);
   // Something newer is in the bubble (a hint, the solve): this line is history.
   if (get().botLineId !== lineId || get().challenge?.id !== record.id) return;
   const text = reply ? `${reply.say}${tail}` : local;
-  botSay(`${text}${offerText}`, 'praise', { voice: 'auto', sticky: offer !== null, offer });
+  const saidId = botSay(`${text}${offerText}`, 'praise', { voice: 'auto', sticky: offer !== null, offer });
+  // A real model needs longer than the instant line waits. Its request is sent and paid for, so
+  // it is not cancelled: when the answer comes while nothing newer was said, Pip adds it.
+  if (!reply && !known && !frustrated) void addLateFeedback(asking, record, saidId, `${tail}${offerText}`, offer);
 
   if (frustrated) {
     rt.breakShown = true;
-    apply({ breakOpen: true });
+    // The speech bubble floats above every sheet and would lie on the heading of the break:
+    // Pip's line is put away (it stays in the conversation), and the sheet has the screen.
+    apply({ breakOpen: true, botLine: null, botLineSticky: false, botOffer: null, helpOffered: false });
     if (mayVoice('auto')) say(`${t('play.break.title')}. ${t('play.break.text')}`);
   }
+}
+
+/** The tutor's wording for a wrong try that arrived after the instant line was said. */
+async function addLateFeedback(
+  asking: Promise<TutorReply | null>,
+  record: ChallengeRecord,
+  saidId: number,
+  tail: string,
+  offer: BotOffer | null,
+): Promise<void> {
+  const late = await Promise.race([asking, wait(PLAY.lateFeedbackMs - PLAY.feedbackWaitMs).then(() => null)]);
+  const s = get();
+  if (!late || s.botLineId !== saidId || s.challenge?.id !== record.id || !isOpen(s) || s.breakOpen) return;
+  botSay(`${late.say}${tail}`, 'praise', { voice: 'auto', sticky: offer !== null, offer });
 }
 
 function range(count: number): number[] {
@@ -1025,10 +1200,25 @@ async function requestHint(): Promise<void> {
   touch();
   const { run, level } = withHint(runOf(s));
   rt.idleOffer = false;
-  apply({ ...runPatch(run), phase: 'answering', botOffer: null, helpOffered: false });
+  // On screen at once, so the child sees that Pip heard them while the hint is on its way. It is a
+  // status, not something Pip said: it is neither spoken nor kept in the conversation.
+  const waitingId = get().botLineId + 1;
+  apply({
+    ...runPatch(run),
+    phase: 'answering',
+    botLine: t('play.thinking'),
+    botLineId: waitingId,
+    botLineSticky: true,
+    botOffer: null,
+    helpOffered: false,
+  });
   void persistRun();
-  const reply = await askTutor({ intent: level === 1 ? 'nudge' : 'hint', hintLevel: level });
-  if (get().challenge?.id !== record.id || !isOpen(get())) return;
+  const reply = await askTutor({ intent: level === 1 ? 'nudge' : 'hint', hintLevel: level }, true, deps.helpWaitMs);
+  if (get().challenge?.id !== record.id || !isOpen(get())) {
+    // No hint any more (the challenge was solved meanwhile): the status must not stay behind.
+    if (get().botLineId === waitingId) apply({ botLine: null, botLineSticky: false });
+    return;
+  }
   const line = reply?.say ?? t('play.fallback');
   apply({ highlightIds: highlightsFor(record.content, line, reply?.highlightIds ?? []) });
   botSay(line, 'hint', { voice: 'asked', sticky: true });
@@ -1058,7 +1248,7 @@ async function requestWalkthrough(): Promise<void> {
 
 async function showStep(record: ChallengeRecord, step: number): Promise<void> {
   apply({ walkthroughText: null, highlightIds: [] });
-  const reply = await askTutor({ intent: 'walkthrough-step', hintLevel: 3, walkthroughStep: step });
+  const reply = await askTutor({ intent: 'walkthrough-step', hintLevel: 3, walkthroughStep: step }, true, deps.helpWaitMs);
   const s = get();
   if (s.challenge?.id !== record.id || !s.walkthroughOpen || s.walkthroughStep !== step) return;
   const line = safeLine(reply?.say ?? record.content.walkthrough[step] ?? t('play.fallback'));
@@ -1154,18 +1344,27 @@ function solve(): void {
   rt.idleTimer = null;
   rt.idleOffer = false;
   const run = runOf(s);
-  const outcome = outcomeOfRun(run);
-  const passed = checkPassed(record.purpose, outcome);
   const willTeachBack = shouldTeachBack({
     challenge: record.content,
     walkthroughUsed: run.walkthroughUsed,
     purpose: record.purpose,
     roll: deps.random(),
   });
-  playMoods([{ state: passed ? 'proud' : 'celebrating', ms: 2800 }]);
+  showSolved(record, run, willTeachBack, true);
+}
+
+/**
+ * The solved moment. `fresh` is false when the challenge was solved before the page was reloaded
+ * or closed and the child comes back to it: the same moment again, without a second celebration.
+ */
+function showSolved(record: ChallengeRecord, run: Run, willTeachBack: boolean, fresh: boolean): void {
+  const outcome = outcomeOfRun(run);
+  // The same rule as the stage engine: an answer found by trying the options does not pass a check.
+  const passed = checkPassed(record.purpose, creditedOutcome(outcome, wrongTriesOf(run), answerSpace(record.content)));
+  if (fresh) playMoods([{ state: passed ? 'proud' : 'celebrating', ms: 2800 }]);
   apply({
     phase: 'solved',
-    celebrate: s.celebrate + 1,
+    celebrate: get().celebrate + (fresh ? 1 : 0),
     solvedOutcome: outcome,
     checkPassed: passed,
     willTeachBack,
@@ -1177,7 +1376,12 @@ function solve(): void {
     helpOffered: false,
     breakOpen: false,
   });
-  void praise(record);
+  if (fresh) {
+    void praise(record);
+    // The solve is written down before anything else: the teach-back and the storing of the
+    // attempt can be cut off by a reload, and the child must not have to solve it again.
+    void persistRun();
+  }
   // Without a teach-back there is nothing left to wait for: the attempt is stored at once.
   if (!willTeachBack) void recordOnce(null);
 }
@@ -1242,14 +1446,17 @@ async function finishAttempt(input: AttemptInput, token: number, context: ChildC
   const { challenge } = input;
   const childId = challenge.childId;
   // `recordAttempt` is one transaction and idempotent per challenge, so a second go after a failure is safe.
-  let result: AttemptResult | null = null;
+  let result: RecordedAttempt | null = null;
   for (let go = 0; go < 2 && result === null; go += 1) {
     result = (await quiet(recordAttempt({ ...input, now: now() }))) ?? null;
   }
 
   let storyEnding: string | null = null;
   if (result) {
-    if (challenge.libraryId !== null) await quiet(recordLibraryOutcome(challenge.libraryId, result.attempt.outcome));
+    // The same challenge can be open in two tabs: the library hears of the one attempt that was stored.
+    if (challenge.libraryId !== null && result.alreadyRecorded !== true) {
+      await quiet(recordLibraryOutcome(challenge.libraryId, result.attempt.outcome));
+    }
     if (result.skillState.checkPending) void prepareConceptCheck(childId, challenge.skillId);
     // After a walkthrough the next item is an easier sibling. Placement keeps its own order of items.
     if (input.walkthroughUsed && challenge.purpose !== 'placement') {
@@ -1262,7 +1469,8 @@ async function finishAttempt(input: AttemptInput, token: number, context: ChildC
       const story = await quiet(advanceStory(challenge.storyId));
       if (story?.status === 'finished') storyEnding = story.ending;
     }
-    void quiet(db.kv.delete(runKey(challenge)));
+    // After the latest write of the run, so that a late write cannot bring the run back.
+    void quiet(Promise.resolve(rt.saving).then(() => db.kv.delete(runKey(challenge))));
     if (context) void writeNotesWhenDue(childId, context);
   }
   const allowance = await quiet(getPlayAllowance(childId, now()));
@@ -1343,6 +1551,7 @@ export function resetPlaySession(): void {
   rt.context = null;
   rt.sessionId = null;
   rt.record = null;
+  rt.saving = null;
   rt.sibling = null;
   rt.thinking = 0;
   rt.activeMs = 0;

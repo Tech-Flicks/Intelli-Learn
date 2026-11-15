@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChallengeSchema, type Challenge } from '@/core/schemas';
 import { LOCALES, type Settings } from '@/core/types';
+import { SAMPLE_CHALLENGES } from '@/engine';
 import { completion, fakeResponse, sentRequest, settingsFor } from './testSupport';
 
 const world = vi.hoisted(() => ({
@@ -16,12 +17,15 @@ vi.mock('@/data', () => ({
     world.usage.push(delta);
   }),
 }));
-vi.mock('@/security', () => ({ getApiKey: vi.fn(async () => 'sk-test') }));
+vi.mock('@/security', () => ({
+  getApiKeyFor: vi.fn(async () => 'sk-test'),
+  hasApiKey: vi.fn(async () => true),
+}));
 
 import { clientTuning, resetClientSession } from './client';
 import { mentionsNumber, revealsAnswer } from './leak';
 import { KIND_EXAMPLES } from './prompts';
-import { localSafetyCheck } from './safety';
+import { localSafetyCheck, resetModerationSession } from './safety';
 import { TUTOR_PHRASES, checkTutorReply, limitSentences, offlineTutorReply, tutorReply } from './tutor';
 import type { ChildContext, TutorRequest } from './types';
 
@@ -43,6 +47,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
   resetClientSession();
+  resetModerationSession();
   clientTuning.backoffMs = 0;
 });
 
@@ -318,6 +323,83 @@ describe('tutorReply', () => {
     const sent = JSON.stringify(sentMessages());
     expect(sent).not.toContain('kill');
     expect(sent).toContain('Let us get back to it.');
+  });
+
+  it('does not show a reply that asks the child for personal information, however it is phrased', async () => {
+    world.settings = settingsFor('direct');
+    const asks = [
+      'Great question! Which city do you live in?',
+      'What is the name of your school?',
+      "What is your mom's name?",
+      'Which street is your house on?',
+      'How old will you be on your next birthday?',
+      'Add me on Roblox and we can play.',
+      'Visit coolgames.io to win a prize.',
+    ];
+    const expected = offlineTutorReply(req({ intent: 'chat', childText: 'can we talk' }));
+    for (const say of asks) {
+      expect(checkTutorReply(req({ intent: 'chat', childText: 'can we talk' }), { say, highlightIds: [], redirected: false }), say).toBeNull();
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValueOnce(fakeResponse(completion({ say, highlightIds: [], redirected: false })));
+      expect(await tutorReply(req({ intent: 'chat', childText: 'can we talk' })), say).toEqual(expected);
+    }
+  });
+
+  it('does not pass on a chat reply that spells out an order, a sort or a match', () => {
+    const cases: [Challenge, string][] = [
+      [ChallengeSchema.parse(SAMPLE_CHALLENGES.order), 'Here you go: "Seed", then "Sprout", then "Leafy plant", then "Flower"'],
+      [ChallengeSchema.parse(SAMPLE_CHALLENGES.sort), '"Rubber duck" goes in "Floats"; "Rock" goes in "Sinks"; "Leaf" goes in "Floats"'],
+      [ChallengeSchema.parse(SAMPLE_CHALLENGES.match), '"Bee" with "Hive"; "Bird" with "Nest"; "Fish" with "Pond"'],
+    ];
+    for (const [challenge, say] of cases) {
+      for (const intent of ['chat', 'nudge', 'hint', 'wrong-answer'] as const) {
+        const request = req({ challenge, intent, childText: 'what is the answer' });
+        expect(checkTutorReply(request, { say, highlightIds: [], redirected: false }), `${challenge.title} ${intent}`).toBeNull();
+      }
+      // After the challenge is solved the answer is no secret.
+      expect(checkTutorReply(req({ challenge, intent: 'praise' }), { say, highlightIds: [], redirected: false })?.say).toBe(say);
+    }
+  });
+
+  it('asks the moderation service about a chat reply and falls back when it is flagged', async () => {
+    world.settings = settingsFor('direct');
+    resetModerationSession();
+    const say = 'Clouds are made of tiny drops of water. Now, back to our rocket!';
+    let flagged = true;
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/moderations')
+        ? fakeResponse({ results: [{ flagged, categories: { harassment: flagged }, category_scores: {} }] })
+        : fakeResponse(completion({ say, highlightIds: [], redirected: false })),
+    );
+    const chat = req({ intent: 'chat', childText: 'what are clouds made of' });
+    expect(await tutorReply(chat)).toEqual(offlineTutorReply(chat));
+    const moderated = fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/moderations'));
+    expect(moderated).toHaveLength(1);
+    expect(JSON.stringify(sentRequest(moderated[0] as unknown[]).body)).toContain('tiny drops of water');
+
+    flagged = false;
+    expect((await tutorReply(chat)).say).toBe(say);
+
+    // The approved hint texts need no second opinion: only free chat is moderated.
+    fetchMock.mockClear();
+    await tutorReply(req({ intent: 'nudge' }));
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/moderations'))).toHaveLength(0);
+    resetModerationSession();
+  });
+
+  it('shows the chat reply when the endpoint has no moderation service or it is down', async () => {
+    world.settings = settingsFor('direct');
+    resetModerationSession();
+    const say = 'Clouds are made of tiny drops of water. Now, back to our rocket!';
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/moderations') ? fakeResponse('Not found', { status: 404 }) : fakeResponse(completion({ say, highlightIds: [], redirected: false })),
+    );
+    const chat = req({ intent: 'chat', childText: 'what are clouds made of' });
+    expect((await tutorReply(chat)).say).toBe(say);
+    expect((await tutorReply(chat)).say).toBe(say);
+    // Asked once, then remembered.
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/moderations'))).toHaveLength(1);
+    resetModerationSession();
   });
 
   it('never throws, even with a broken request', async () => {

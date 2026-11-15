@@ -13,6 +13,9 @@ import {
   parseStoredPosition,
   pipStateFor,
   positionKey,
+  restInset,
+  restPoint,
+  restsLow,
   toFraction,
   type Insets,
   type Size,
@@ -175,5 +178,44 @@ describe("Pip's face", () => {
   it('is never angry', () => {
     expect(pipStateFor({ ...quiet, base: 'angry' })).toBe('curious');
     expect(pipStateFor({ ...quiet, base: 'angry', speaking: true })).toBe('talking');
+  });
+});
+
+describe("Pip's place next to Check", () => {
+  const viewport = { width: 360, height: 640 };
+  const bounds = boundsFor(viewport, NONE, BOT.sizeSmall, 64);
+  const dockY = dockPoint(bounds, BOT.sizeSmall, 340).y;
+  const at = (seatTop: number | null, checkTop: number | null) => ({ seatTop, dockY, checkTop, viewportHeight: viewport.height });
+
+  it('is the right end of the Check bar, inside the screen', () => {
+    // Check sticks to the bottom of the screen: Pip is centred on it, and stays on the screen.
+    const stuck = { top: viewport.height - 8 - 64, height: 64 };
+    expect(restPoint(bounds, BOT.sizeSmall, 340, stuck)).toEqual({ x: 340 - BOT.sizeSmall, y: viewport.height - BOT.margin - BOT.sizeSmall });
+    // At the end of the page the bar sits higher: he goes with it.
+    expect(restPoint(bounds, BOT.sizeSmall, 340, { top: 448, height: 64 })).toEqual({ x: 340 - BOT.sizeSmall, y: 444 });
+    expect(restPoint(bounds, BOT.sizeSmall, null, stuck).x).toBe(bounds.maxX);
+    expect(restPoint(bounds, BOT.sizeSmall, 2000, stuck).x).toBe(bounds.maxX);
+    expect(restPoint(bounds, BOT.sizeSmall, 340, { top: -200, height: 64 }).y).toBe(bounds.minY);
+    expect(restInset(BOT.sizeSmall)).toBeGreaterThan(BOT.sizeSmall);
+  });
+
+  it('is taken once the seat in the question card has scrolled away and Check is on the screen', () => {
+    expect(restsLow(at(dockY, 568), false)).toBe(false);
+    expect(restsLow(at(dockY - BOT.restAfter, 568), false)).toBe(false);
+    expect(restsLow(at(dockY - BOT.restAfter - 1, 568), false)).toBe(true);
+    expect(restsLow(at(-400, 568), false)).toBe(true);
+  });
+
+  it('is left again when the seat is back, without hopping to and fro at the edge', () => {
+    expect(restsLow(at(dockY - BOT.restAfter + 4, 568), true)).toBe(true);
+    expect(restsLow(at(dockY - BOT.restAfter / 2, 568), true)).toBe(false);
+    expect(restsLow(at(dockY, 568), true)).toBe(false);
+  });
+
+  it('is not taken while Check is below the screen, or when there is no seat or no Check on the page', () => {
+    expect(restsLow(at(-400, 700), false)).toBe(false);
+    expect(restsLow(at(-400, viewport.height - BOT.margin), true)).toBe(false);
+    expect(restsLow(at(null, 568), true)).toBe(false);
+    expect(restsLow(at(-400, null), true)).toBe(false);
   });
 });

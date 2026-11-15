@@ -147,6 +147,158 @@ describe('entering', () => {
   });
 });
 
+describe('an unfinished challenge and another world or mode', () => {
+  const FINISH_FIRST = 'Let us finish this one first. Then we go where you wanted!';
+
+  /** Leaves the play screen and comes back a moment later through another launcher. */
+  async function comeBack(request: Parameters<ReturnType<typeof play>['start']>[1]): Promise<ChallengeRecord> {
+    await play().leave();
+    const later = Date.now() + 60_000;
+    setPlayDeps({ now: () => later });
+    return enter(mia, request);
+  }
+
+  afterEach(() => setPlayDeps(null));
+
+  it('comes back when another world is opened, and Pip says why', async () => {
+    const first = await enter(mia);
+    const other = first.strand === 'science' ? 'math' : 'science';
+    const again = await comeBack({ strand: other });
+    expect(again.id).toBe(first.id);
+    expect(play().messages[0]).toMatchObject({ role: 'bot', text: FINISH_FIRST });
+    // What was asked for is kept for afterwards.
+    expect(play().request).toEqual({ strand: other });
+    expect(await db.challenges.where('[childId+status]').equals([mia.id, 'active']).count()).toBe(1);
+  });
+
+  it('keeps the picture idea of the studio until the unfinished challenge is done', async () => {
+    const first = await enter(mia);
+    expect(first.mode).not.toBe('studio');
+    const again = await comeBack({ mode: 'studio', pick: 'dragon.baking.moon' });
+    expect(again.id).toBe(first.id);
+    expect(play().messages[0]).toMatchObject({ role: 'bot', text: FINISH_FIRST });
+    // The idea was not used up by the challenge that came back.
+    expect(play().request).toEqual({ mode: 'studio', pick: 'dragon.baking.moon' });
+    expect(play().urlReset).toBe(0);
+  });
+
+  it('says nothing of the kind when the child simply comes back to the same challenge', async () => {
+    const first = await enter(mia);
+    const again = await comeBack({});
+    expect(again.id).toBe(first.id);
+    expect(play().messages.some((message) => message.text === FINISH_FIRST)).toBe(false);
+    const sameWorld = await comeBack({ strand: first.strand });
+    expect(sameWorld.id).toBe(first.id);
+    expect(play().messages.some((message) => message.text === FINISH_FIRST)).toBe(false);
+  });
+
+  it('says nothing of the kind for a new challenge', async () => {
+    await enter(mia, { strand: 'science' });
+    expect(play().messages.some((message) => message.text === FINISH_FIRST)).toBe(false);
+  });
+});
+
+describe('an idea from the Imagination Studio', () => {
+  const READY_MADE = 'I could not paint your idea this time. Here is a puzzle I had ready!';
+  const FINISH_FIRST = 'Let us finish this one first. Then we go where you wanted!';
+  const said = (text: string): boolean => play().messages.some((message) => message.role === 'bot' && message.text === text);
+
+  afterEach(() => setPlayDeps(null));
+
+  it('says so when the idea could not be drawn (Demo mode), instead of passing a ready-made challenge off as the idea', async () => {
+    // No AI is set up: the canvas comes from the built-in bank and has nothing to do with the idea.
+    const canvas = await enter(mia, { mode: 'studio', pick: 'dragon.baking.moon' });
+    expect(canvas.mode).toBe('studio');
+    expect(canvas.source).toBe('offline');
+    expect(said(READY_MADE)).toBe(true);
+    // The idea was asked for once: play goes on as usual.
+    expect(play().request).toEqual({});
+  });
+
+  it('says nothing of the kind when the AI drew the idea, or when no idea was asked for', async () => {
+    vi.mocked(takeNext).mockImplementationOnce(async (childId, opts) => {
+      const record = await realSupply.takeNext(childId, opts);
+      const drawn: ChallengeRecord = { ...record, source: 'ai' };
+      await db.challenges.put(drawn);
+      return drawn;
+    });
+    await enter(mia, { mode: 'studio', pick: 'dragon.baking.moon' });
+    expect(said(READY_MADE)).toBe(false);
+    await play().leave();
+    resetPlaySession();
+    await db.challenges.clear();
+    await enter(mia, { mode: 'studio' });
+    expect(said(READY_MADE)).toBe(false);
+  });
+
+  it('keeps a second idea while the first canvas is unfinished, and Pip says why the old one is back', async () => {
+    const first = await enter(mia, { mode: 'studio', pick: 'dragon.baking.moon' });
+    await play().leave();
+    const later = Date.now() + 60_000;
+    setPlayDeps({ now: () => later });
+    const again = await enter(mia, { mode: 'studio', pick: 'robot.baking.moon' });
+    // No skipping: the unfinished canvas comes back.
+    expect(again.id).toBe(first.id);
+    expect(said(FINISH_FIRST)).toBe(true);
+    expect(said(READY_MADE)).toBe(false);
+    // The new idea is not swallowed: it is asked for again once this one is finished.
+    expect(play().request).toEqual({ mode: 'studio', pick: 'robot.baking.moon' });
+    expect(play().urlReset).toBe(0);
+  });
+});
+
+describe('play time when the play screen was also opened in another tab', () => {
+  const realProgressionApi = () => realProgression;
+
+  async function playedMsToday(): Promise<number> {
+    return (await db.sessions.toArray()).reduce((sum, session) => sum + session.activeMs, 0);
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps counting when the other tab took the session over and stays in the background', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    await enter(mia);
+    // Another tab opens the play screen: that ends this screen's session.
+    const other = await realProgressionApi().startSession(mia.id);
+    for (let i = 0; i < 4; i += 1) {
+      play().touch();
+      vi.advanceTimersByTime(15_000);
+    }
+    await vi.waitFor(async () => expect(await playedMsToday()).toBe(60_000));
+    expect((await db.sessions.get(other.id))?.activeMs).toBe(60_000);
+  });
+
+  it('opens a new session and keeps counting when the other tab was left again', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    await enter(mia);
+    const mine = (await db.sessions.toArray())[0];
+    const other = await realProgressionApi().startSession(mia.id);
+    await realProgressionApi().endSession(other.id);
+
+    play().touch();
+    vi.advanceTimersByTime(15_000);
+    await vi.waitFor(async () => expect(await playedMsToday()).toBe(15_000));
+    play().touch();
+    vi.advanceTimersByTime(15_000);
+    await vi.waitFor(async () => expect(await playedMsToday()).toBe(30_000));
+
+    const sessions = await db.sessions.toArray();
+    // One new session took over; not one per tick.
+    expect(sessions).toHaveLength(3);
+    const open = sessions.filter((session) => session.endedAt === null);
+    expect(open).toHaveLength(1);
+    expect(open[0]?.id).not.toBe(mine?.id);
+    expect(open[0]?.activeMs).toBe(30_000);
+
+    // Leaving ends the session that is open now.
+    await play().leave();
+    expect((await db.sessions.toArray()).every((session) => session.endedAt !== null)).toBe(true);
+  });
+});
+
 describe('when the supply fails', () => {
   it('falls back to an offline challenge instead of an error', async () => {
     vi.mocked(takeNext).mockRejectedValue(new Error('the supply is broken'));
@@ -211,12 +363,75 @@ describe('answering', () => {
     expect(recordAttempt).not.toHaveBeenCalled();
   });
 
+  it('counts a double tap on Check with a wrong answer as one try, not two', async () => {
+    let clock = 5_000_000;
+    setPlayDeps({ now: () => clock });
+    await giveChallenge(mia.id, makeContent(CHOICE));
+    await enter(mia);
+    // Two honest mistakes, each with a child's double tap: Check is pressed twice in a row.
+    answerWrong(['a']);
+    clock += 180;
+    answerWrong(['a']);
+    await settled();
+    expect(play().wrongTries).toBe(1);
+    clock += 4000;
+    answerWrong(['c'], { correct: false, misconception: null, progress: 0 });
+    clock += 250;
+    answerWrong(['c'], { correct: false, misconception: null, progress: 0 });
+    clock += 250;
+    answerWrong(['c'], { correct: false, misconception: null, progress: 0 });
+    await settled();
+    expect(play().wrongTries).toBe(2);
+    expect(play().answers.map((answer) => answer.answer)).toEqual([['a'], ['c']]);
+    // Two wrong tries are not rapid random tapping: no break, and "Show me how" stays locked.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(play().breakOpen).toBe(false);
+    expect(play().botOffer).toBe('hint');
+
+    // The same wrong answer after a pause is a new try, and another answer counts at once.
+    clock += 3000;
+    answerWrong(['c'], { correct: false, misconception: null, progress: 0 });
+    clock += 100;
+    answerWrong(['a']);
+    expect(play().wrongTries).toBe(4);
+  });
+
+  it('opens the slow breath after four quick wrong tries, with nothing of Pip lying on top of it', async () => {
+    let clock = 5_000_000;
+    setPlayDeps({ now: () => clock });
+    await giveChallenge(mia.id, makeContent(CHOICE));
+    await enter(mia);
+    for (const pick of ['a', 'c', 'a', 'c']) {
+      clock += 1000;
+      answerWrong([pick]);
+      await settled();
+    }
+    await vi.waitFor(() => expect(play().breakOpen).toBe(true));
+    // The speech bubble floats above every sheet: Pip's line would cover the heading of the break.
+    expect(play().botLine).toBeNull();
+    expect(play().botOffer).toBeNull();
+    expect(play().helpOffered).toBe(false);
+    // What Pip said is still in the conversation, and the challenge stays to be solved.
+    expect(play().messages.some((message) => message.role === 'bot' && message.kind === 'praise')).toBe(true);
+    expect(play().phase).toBe('answering');
+
+    // Nothing comes back into the bubble while the break is on show.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(play().botLine).toBeNull();
+    play().closeBreak();
+    expect(play().breakOpen).toBe(false);
+  });
+
   it('offers a hint from the second wrong try on, and only offers', async () => {
+    let clock = 5_000_000;
+    setPlayDeps({ now: () => clock });
     await giveChallenge(mia.id, makeContent(CHOICE));
     await enter(mia);
     answerWrong();
     await settled();
     expect(play().helpOffered).toBe(false);
+    // The child looks again and presses Check once more (not a double tap: a moment has passed).
+    clock += 2000;
     answerWrong();
     await vi.waitFor(() => expect(play().botLine).toContain('Want a hint?'));
     expect(play().botOffer).toBe('hint');
@@ -359,6 +574,81 @@ describe('the help ladder', () => {
   });
 });
 
+describe('help while the AI is slow', () => {
+  const THINKING = 'Pip is thinking...';
+
+  /** An AI that never answers. Given up on (an aborted signal), the tutor answers on the device, as the real one does. */
+  function slowAi(): void {
+    vi.mocked(tutorReply).mockImplementation((req) => (req.signal?.aborted ? realAi.tutorReply(req) : new Promise<never>(() => undefined)));
+  }
+
+  afterEach(() => {
+    setPlayDeps(null);
+    vi.mocked(tutorReply).mockImplementation(realAi.tutorReply);
+  });
+
+  it('shows at once that Pip is thinking, and gives the hint of the challenge itself when the AI takes too long', async () => {
+    await giveChallenge(mia.id, makeContent(CHOICE));
+    await enter(mia);
+    slowAi();
+    setPlayDeps({ helpWaitMs: 40 });
+    const asking = play().requestHint();
+    // Before any answer: the child sees that Pip heard them.
+    expect(play().botLine).toBe(THINKING);
+    expect(play().thinking).toBe(true);
+    await asking;
+    expect(play().botLine).toContain('Look closely at the picture.');
+    expect(play().thinking).toBe(false);
+    expect(play().hintLevel).toBe(1);
+    // "Thinking" is a status, not something Pip said: it is not in the conversation.
+    expect(play().messages.some((message) => message.text === THINKING)).toBe(false);
+    // The slow request was given up, not left running.
+    expect(vi.mocked(tutorReply).mock.calls[0]?.[0].signal?.aborted).toBe(true);
+  });
+
+  it('does not wait longer for a step of the walkthrough either', async () => {
+    await giveChallenge(mia.id, makeContent(CHOICE));
+    await enter(mia);
+    await play().requestHint();
+    await play().requestHint();
+    slowAi();
+    setPlayDeps({ helpWaitMs: 40 });
+    await play().requestWalkthrough();
+    expect(play().walkthroughOpen).toBe(true);
+    expect(play().walkthroughText).toContain('Point at the first apple.');
+    expect(play().thinking).toBe(false);
+  });
+
+  it('keeps the hint of the AI when it comes in time', async () => {
+    await giveChallenge(mia.id, makeContent(CHOICE));
+    await enter(mia);
+    vi.mocked(tutorReply).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { say: 'Count the red ones first.', highlightIds: [], redirected: false };
+    });
+    setPlayDeps({ helpWaitMs: 2000 });
+    await play().requestHint();
+    expect(play().botLine).toBe('Count the red ones first.');
+  });
+
+  it('takes the thinking line away when the challenge was solved before the hint came', async () => {
+    await giveChallenge(mia.id, makeContent(CHOICE));
+    await enter(mia);
+    let release: (() => void) | undefined;
+    vi.mocked(tutorReply).mockImplementation(async (req) => {
+      if (req.intent === 'nudge') await new Promise<void>((resolve) => (release = resolve));
+      return realAi.tutorReply({ ...req, signal: AbortSignal.abort() });
+    });
+    const asking = play().requestHint();
+    expect(play().botLine).toBe(THINKING);
+    await answerRight();
+    release?.();
+    await asking;
+    expect(play().botLine).not.toBe(THINKING);
+    await untilRecorded();
+  });
+});
+
 describe('recording', () => {
   it('records a solved challenge exactly once, whatever is pressed afterwards', async () => {
     const given = await giveChallenge(mia.id, makeContent(CHOICE, { teachBack: TEACH_BACK }));
@@ -413,6 +703,88 @@ describe('recording', () => {
     expect((await db.challenges.get(given.id))?.status).toBe('completed');
   });
 
+  it('keeps a solved challenge solved when the page is reloaded while the teach-back is still to come', async () => {
+    const given = await giveChallenge(mia.id, makeContent(CHOICE, { teachBack: TEACH_BACK }));
+    setPlayDeps({ random: () => 0 });
+    await enter(mia);
+    answerWrong();
+    await settled();
+    await play().requestHint();
+    answerRight();
+    expect(play().phase).toBe('solved');
+    expect(play().willTeachBack).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The page goes away without a goodbye (a reload, a closed tab): nothing of it runs any more.
+    resetPlaySession();
+    expect(recordAttempt).not.toHaveBeenCalled();
+    // A new roll would say "no teach-back": the one that was promised still comes.
+    setPlayDeps({ random: () => 0.99 });
+    await play().start(mia.id);
+
+    // The child does not have to solve it a second time.
+    expect(play().challenge?.id).toBe(given.id);
+    expect(play().phase).toBe('solved');
+    expect(play().willTeachBack).toBe(true);
+    expect(play().solvedOutcome).toBe('nudge');
+    expect(play().wrongTries).toBe(1);
+    play().beginAnswering();
+    answerWrong();
+    expect(play().phase).toBe('solved');
+    expect(recordAttempt).not.toHaveBeenCalled();
+
+    play().continueAfterSolved();
+    expect(play().phase).toBe('teachback');
+    await play().answerTeachBack('t1');
+    await untilRecorded();
+    expect(recordAttempt).toHaveBeenCalledTimes(1);
+    const attempt = (await db.attempts.toArray())[0];
+    expect(attempt).toMatchObject({ challengeId: given.id, outcome: 'nudge', teachBackCorrect: true });
+    expect(attempt?.answers.map((answer) => answer.correct)).toEqual([false, true]);
+    expect((await db.challenges.get(given.id))?.status).toBe('completed');
+    expect(await db.kv.where('key').startsWith('play:run:').count()).toBe(0);
+  });
+
+  it('finishes the recording on the next start when the page went away in the middle of it', async () => {
+    const given = await giveChallenge(mia.id, makeContent(CHOICE));
+    // The attempt never reaches the database: the page is closed first.
+    vi.mocked(recordAttempt).mockImplementation(() => new Promise(() => undefined));
+    await enter(mia);
+    answerRight();
+    expect(play().phase).toBe('solved');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    resetPlaySession();
+    expect(await db.attempts.count()).toBe(0);
+
+    vi.mocked(recordAttempt).mockImplementation(realProgression.recordAttempt);
+    await play().start(mia.id);
+    expect(play().challenge?.id).toBe(given.id);
+    await untilRecorded();
+    expect(await db.attempts.count()).toBe(1);
+    expect((await db.attempts.toArray())[0]).toMatchObject({ challengeId: given.id, outcome: 'independent' });
+    expect((await db.challenges.get(given.id))?.status).toBe('completed');
+  });
+
+  it('does not take a stored "solved" for granted: the kept answer has to solve the challenge', async () => {
+    const given = await giveChallenge(mia.id, makeContent(CHOICE, { teachBack: TEACH_BACK }));
+    await db.kv.put({
+      key: `play:run:${given.id}:${mia.id}`,
+      value: {
+        v: 1,
+        answers: [],
+        hintsUsed: 0,
+        walkthroughUsed: false,
+        activeMs: 0,
+        solvedBy: { at: 1, answer: ['a'], correct: true, misconception: null },
+        willTeachBack: false,
+      },
+    });
+    await enter(mia);
+    expect(play().phase).toBe('answering');
+    expect(play().answers).toEqual([]);
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
   it('counts only the time the child was really playing', async () => {
     let clock = 1_000_000;
     setPlayDeps({ now: () => clock, random: () => 0.99 });
@@ -438,6 +810,26 @@ describe('recording', () => {
     expect(recordLibraryOutcome).toHaveBeenCalledWith('lib-1', 'independent');
   });
 
+  it('tells the library once when the same challenge was already recorded in another tab', async () => {
+    const record = await giveChallenge(mia.id, makeContent(CHOICE), { libraryId: 'lib-1' });
+    await enter(mia);
+    // The other tab solved the same unfinished challenge first: its attempt is stored and counted there.
+    await realProgression.recordAttempt({
+      challenge: record,
+      answers: [{ at: 1_000, answer: ['b'], correct: true, misconception: null }],
+      hintsUsed: 0,
+      walkthroughUsed: false,
+      teachBackCorrect: null,
+      timeMs: 1000,
+      now: 1_000,
+    });
+    answerRight();
+    await untilRecorded();
+    expect(recordAttempt).toHaveBeenCalled();
+    expect(await db.attempts.where('challengeId').equals(record.id).count()).toBe(1);
+    expect(recordLibraryOutcome).not.toHaveBeenCalled();
+  });
+
   it('still shows the way on when the attempt cannot be stored', async () => {
     await giveChallenge(mia.id, makeContent(CHOICE));
     vi.mocked(recordAttempt).mockRejectedValue(new Error('the disk is full'));
@@ -460,6 +852,20 @@ describe('concept checks', () => {
     expect(play().checkPassed).toBe(true);
     expect(play().botState).toBe('proud');
     expect(play().willTeachBack).toBe(true);
+  });
+
+  it('is not passed when the answer was found by trying the options', async () => {
+    await giveChallenge(mia.id, makeContent(CHOICE), { purpose: 'check' });
+    await enter(mia);
+    answerWrong(['a']);
+    answerWrong(['c']);
+    answerRight();
+    expect(play().solvedOutcome).toBe('second-try');
+    expect(play().checkPassed).toBe(false);
+    expect(play().botState).toBe('celebrating');
+    await recordSettled();
+    const state = await db.skillStates.get(`${mia.id}:${play().challenge?.skillId ?? ''}`);
+    expect(state?.checksPassed ?? 0).toBe(0);
   });
 
   it('is not passed with help', async () => {

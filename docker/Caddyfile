@@ -36,7 +36,10 @@
 
 	encode zstd gzip
 
-	reverse_proxy web:8080 {
+	# Port 8081 is the web container's port for this reverse proxy only (never published):
+	# there nginx takes the device address from the X-Forwarded-For that Caddy sets. Caddy
+	# replaces any X-Forwarded-For a client sent, because no trusted_proxies are configured.
+	reverse_proxy web:8081 {
 		# Pass AI answers through as they arrive instead of buffering them.
 		flush_interval -1
 	}

@@ -12,8 +12,10 @@ export interface Card {
   color?: string;
   /** For text cards. */
   text?: string;
-  /** Caption under an emoji or shape. */
+  /** Caption under an emoji or shape, or under a wide picture card. */
   label?: string;
+  /** A text card whose text is a row of pictures ("🔴🔴🔷"): each takes about twice the room of a letter. */
+  wide?: boolean;
   tappable?: boolean;
   /** Relative size, 1 = normal. */
   scale?: number;
@@ -84,8 +86,8 @@ export function gridSlots(count: number, box: Box = MAIN_BOX, forceRows?: number
   return out;
 }
 
-function textSize(text: string, cellW: number): number {
-  const chars = Math.max(1, Array.from(text).length);
+function textSize(text: string, cellW: number, wide = false): number {
+  const chars = Math.max(1, Array.from(text).length) * (wide ? 2 : 1);
   return round1(clamp((cellW * 0.9) / (chars * 0.58), 3.5, 11));
 }
 
@@ -100,6 +102,8 @@ export function decor(theme: SceneTheme): SceneObjectInput[] {
 
 function placeCards(cards: readonly Card[], box: Box, calm: boolean, forceRows?: number, idPrefix = 'obj'): SceneObjectInput[] {
   const slots = gridSlots(cards.length, box, forceRows);
+  // Picture rows are all drawn at the size of the longest one, so a card with fewer pictures does not look bigger.
+  const widest = cards.reduce((longest, card) => (card.wide && card.text && Array.from(card.text).length > Array.from(longest).length ? card.text : longest), '');
   return cards.map((card, index) => {
     const slot = slots[index] as { x: number; y: number; cellW: number; cellH: number };
     const id = card.id ?? `${idPrefix}${index + 1}`;
@@ -115,7 +119,8 @@ function placeCards(cards: readonly Card[], box: Box, calm: boolean, forceRows?:
         text: card.text.slice(0, 60),
         x: slot.x,
         y: slot.y,
-        size: round1(Math.min(textSize(card.text, slot.cellW), slot.cellH * 0.5) * (card.scale ?? 1)),
+        size: round1(Math.min(textSize(card.wide ? widest : card.text, slot.cellW, card.wide === true), slot.cellH * (label ? 0.4 : 0.5)) * (card.scale ?? 1)),
+        ...(label ? { label } : {}),
         tappable,
         z: 2,
         ...(card.color ? { color: card.color } : {}),
@@ -140,9 +145,25 @@ function placeCards(cards: readonly Card[], box: Box, calm: boolean, forceRows?:
   });
 }
 
+/** Decorations to fall back on when the theme's own would repeat something the scene shows. */
+const SPARE_DECOR = ['✨', '☁️', '🎈', '🍃'] as const;
+
+/** Emoji compared as a child sees them: with or without the variation selector they look the same. */
+const bare = (emoji: string): string => emoji.replace(/\uFE0F/g, '');
+
+/**
+ * Adds the theme's corner decorations while there is room. A decoration never looks like
+ * something the scene itself shows: in "How many shells can you see?" a shell in the corner of
+ * the ocean scene would be one shell more than the answer. Another decoration takes its place.
+ */
 function withDecor(theme: SceneTheme, objects: SceneObjectInput[]): SceneInput {
+  const shown = new Set(objects.flatMap((object) => (object.type === 'emoji' && object.emoji ? [bare(object.emoji)] : [])));
   for (const extra of decor(theme)) {
-    if (objects.length < 15 && (objects.length < 13 || objects.length < 3)) objects.push(extra);
+    if (objects.length >= 13) break;
+    const emoji = [extra.emoji ?? '', ...SPARE_DECOR].find((candidate) => candidate !== '' && !shown.has(bare(candidate)));
+    if (emoji === undefined) continue;
+    objects.push({ ...extra, emoji });
+    shown.add(bare(emoji));
   }
   return { theme, objects };
 }
@@ -154,7 +175,7 @@ function withDecor(theme: SceneTheme, objects: SceneObjectInput[]): SceneInput {
 export function cardScene(theme: SceneTheme, cards: readonly Card[], opts: { box?: Box; calm?: boolean } = {}): SceneInput {
   const shown = cards.slice(0, 13);
   // Long text cards get at most two per row so that they never run into each other.
-  const longText = shown.some((card) => card.text !== undefined && card.emoji === undefined && card.shape === undefined && Array.from(card.text).length > 9);
+  const longText = shown.some((card) => card.text !== undefined && card.emoji === undefined && card.shape === undefined && (card.wide === true || Array.from(card.text).length > 9));
   const rows = longText && shown.length > 2 ? Math.ceil(Math.min(shown.length, 10) / 2) : undefined;
   return withDecor(theme, placeCards(longText ? shown.slice(0, 10) : shown, opts.box ?? MAIN_BOX, opts.calm === true, rows));
 }

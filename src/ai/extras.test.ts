@@ -16,7 +16,10 @@ vi.mock('@/data', () => ({
     world.usage.push(delta);
   }),
 }));
-vi.mock('@/security', () => ({ getApiKey: vi.fn(async () => 'sk-test') }));
+vi.mock('@/security', () => ({
+  getApiKeyFor: vi.fn(async () => 'sk-test'),
+  hasApiKey: vi.fn(async () => true),
+}));
 vi.mock('@/offline', () => ({
   pickOfflineChallenge: vi.fn(),
   pickOfflineStory: vi.fn(() => OFFLINE_STORY),

@@ -3,7 +3,7 @@ import { RobotInteractionSchema, BuildInteractionSchema, type Challenge } from '
 import { buildHasTemptingMistake, buildSolutions, numbersIn, problemsOf, solveMaze } from './check';
 import { CURATED } from './curated';
 import { createRng, hashText } from './rng';
-import { cardScene, gridSlots, stackScene } from './scene';
+import { cardScene, gridSlots, pictureScene, stackScene } from './scene';
 
 const robot = (over: object = {}) =>
   RobotInteractionSchema.parse({ kind: 'robot', cols: 3, rows: 3, start: { x: 0, y: 0, dir: 'right' }, goal: { x: 2, y: 2 }, walls: [{ x: 1, y: 1 }], gems: [{ x: 2, y: 0 }], allowed: ['forward', 'left', 'right'], maxCommands: 8, ...over });
@@ -120,6 +120,22 @@ describe('scenes', () => {
       }
       expect(new Set(slots.map((slot) => `${slot.x},${slot.y}`)).size).toBe(count);
     }
+  });
+
+  it('never decorates a scene with the thing the scene shows, so a count stays right', () => {
+    const emojiCount = (objects: readonly { emoji?: string | undefined }[], emoji: string): number => objects.filter((o) => o.emoji === emoji).length;
+    // The ocean decoration is a shell, the forest one a mushroom, the plain one a star.
+    for (const count of [1, 2, 4, 9]) {
+      expect(emojiCount(cardScene('ocean', Array.from({ length: count }, () => ({ emoji: '🐚' }))).objects ?? [], '🐚')).toBe(count);
+      expect(emojiCount(cardScene('forest', Array.from({ length: count }, () => ({ emoji: '🍄' }))).objects ?? [], '🍄')).toBe(count);
+      expect(emojiCount(cardScene('plain', Array.from({ length: count }, () => ({ emoji: '⭐' }))).objects ?? [], '⭐')).toBe(count);
+      // A picture scene shows at most eight things.
+      expect(emojiCount(pictureScene('ocean', Array.from({ length: count }, () => '🌊')).objects ?? [], '🌊')).toBe(Math.min(count, 8));
+    }
+    // The scene is still decorated, with something else.
+    const one = cardScene('plain', [{ emoji: '⭐' }]).objects ?? [];
+    expect(one.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(one.map((o) => o.emoji)).size).toBe(one.length);
   });
 
   it('always builds scenes with 3 to 15 objects and unique ids', () => {

@@ -128,11 +128,16 @@ const sameText = (a: string, b: string): boolean => a.trim().toLowerCase() === b
  * Order: rating 5, 4, unrated, 3; then fewer uses; then newest.
  * `themeFits` tells whether the item's theme is the plan's theme or one of the
  * child's interests; when it is not, the caller may remix the item.
+ *
+ * The library is shared by all children and an item does not record which content
+ * rules it was approved under, so the caller passes `opts.accept` to leave out what
+ * does not pass the rules of the child it would go to.
  */
 export async function findReusable(
   plan: ChallengePlan,
   child: { id: string; ageGroup: AgeGroup; interests: string[] },
   locale: Locale,
+  opts: { accept?: (item: LibraryItem) => boolean } = {},
 ): Promise<{ item: LibraryItem; themeFits: boolean } | null> {
   const stage = clampStage(plan.stage);
   const rows = await db.library
@@ -150,7 +155,8 @@ export async function findReusable(
   fitting.sort(
     (a, b) => ratingRank(a.rating) - ratingRank(b.rating) || a.uses - b.uses || b.createdAt - a.createdAt,
   );
-  const item = fitting[0];
+  const accept = opts.accept;
+  const item = accept ? fitting.find((candidate) => accept(candidate)) : fitting[0];
   if (!item) return null;
   const themeFits =
     sameText(item.theme, plan.theme) || child.interests.some((interest) => sameText(interest, item.theme));

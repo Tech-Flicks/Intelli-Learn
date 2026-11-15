@@ -86,6 +86,20 @@ export const ENGINEERING_SETS: KnowledgeSet[] = [
     ],
   },
   {
+    type: 'cat', id: 'eng-wheel-ramp-lever', strand: E, skills: ['engineering-simple-machines'], grades: ['1', '1'], scene: 'playground', icons: ['🛞', '🛝', '⚖️'],
+    title: 'Wheel, Ramp or Lever?',
+    intro: 'Wheels, ramps and levers are hiding in things you use every day.',
+    hint: 'Does it roll, does it slope, or does it tip on a middle point?',
+    explain: 'A wheel rolls. A ramp is a slope. A lever is a bar that tips on one point.',
+    fun: 'A seesaw is a lever, and a playground slide is a ramp.',
+    teach: ['Why is a playground slide a ramp?', 'It is a slope.', 'It is shiny.', 'It is at the park.'],
+    bins: [
+      bin('Wheel|🛞', 'something that has wheels', 'things that have wheels', 'A wheel is round and rolls.', 'bicycle|🚲; shopping cart|🛒; roller skate|🛼; scooter|🛴'),
+      bin('Ramp|🛝', 'a ramp', 'ramps', 'A ramp is a slope from low to high.', 'playground slide|🛝; wheelchair ramp; loading ramp; skate ramp'),
+      bin('Lever|⚖️', 'a lever', 'levers', 'A lever is a bar that tips on one point.', 'seesaw; crowbar; bottle opener; oar of a rowing boat'),
+    ],
+  },
+  {
     type: 'cat', id: 'eng-machines', strand: E, skills: ['engineering-simple-machines'], grades: ['2', '5'], scene: 'workshop', icons: ['⚙️', '🔧', '🪓'],
     title: 'Simple Machines',
     intro: 'Simple machines make work easier, and they are hiding all around you.',

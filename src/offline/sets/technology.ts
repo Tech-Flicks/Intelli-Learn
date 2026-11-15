@@ -19,6 +19,19 @@ export const TECHNOLOGY_SETS: KnowledgeSet[] = [
     ],
   },
   {
+    type: 'cat', id: 'tech-ask-first', strand: T, skills: ['technology-digital-citizenship'], grades: ['PK', 'K'], scene: 'plain',
+    title: 'Ask a Grown-Up First',
+    intro: 'Ask a grown-up before you use a screen.',
+    hint: 'Does it have a screen?',
+    explain: 'Ask a trusted grown-up before you use a screen.',
+    fun: 'Even grown-ups ask for help with their screens.',
+    teach: ['Who do you ask before you use a tablet?', 'A trusted grown-up.', 'Nobody.', 'The tablet.'],
+    bins: [
+      bin('Ask first|🙋', 'something you ask a grown-up about first', 'things you ask a grown-up about first', 'You ask a grown-up before you use a screen.', 'tablet|📱; TV|📺; laptop|💻; game console|🎮'),
+      bin('Just play|👍', 'something you can just play with', 'things you can just play with', 'Toys and books have no screen.', 'picture book|📕; crayon|🖍️; ball|⚽; teddy bear|🧸'),
+    ],
+  },
+  {
     type: 'cat', id: 'tech-private', strand: T, skills: ['technology-digital-citizenship'], grades: ['1', '4'], scene: 'city',
     title: 'Private or OK to Share?',
     intro: 'Some information about you should stay private online.',

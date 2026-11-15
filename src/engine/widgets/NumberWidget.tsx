@@ -65,7 +65,9 @@ export function NumberWidget({
     FOCUS_RING,
   );
 
-  const keyButton = (key: KeypadKey, face: string, name?: string): JSX.Element => (
+  // Every key is a direct child of the grid, which gives it the width of its cell: a button
+  // inside a plain wrapper would shrink to the width of its text.
+  const keyButton = (key: KeypadKey, face: string, name?: string, wide = false): JSX.Element => (
     <motion.button
       key={key}
       type="button"
@@ -73,7 +75,7 @@ export function NumberWidget({
       disabled={disabled}
       aria-label={name ?? face}
       onClick={() => press(key)}
-      className={keyClass}
+      className={cx(keyClass, wide && 'col-span-3')}
     >
       <span aria-hidden="true">{face}</span>
     </motion.button>
@@ -110,9 +112,7 @@ export function NumberWidget({
         {interaction.allowNegative ? keyButton('-', '±', labels.minus) : interaction.allowDecimal ? keyButton('.', '.', labels.decimalPoint) : <span />}
         {keyButton('0', '0')}
         {keyButton('back', '⌫', labels.backspace)}
-        {interaction.allowNegative && interaction.allowDecimal ? (
-          <div className="col-span-3">{keyButton('.', '.', labels.decimalPoint)}</div>
-        ) : null}
+        {interaction.allowNegative && interaction.allowDecimal ? keyButton('.', '.', labels.decimalPoint, true) : null}
       </div>
     </div>
   );

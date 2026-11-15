@@ -9,6 +9,7 @@ import { db, getUsageThisMonth, getUsageToday, listChildren } from '@/data';
 import { gradeName, hasString, strandName, tn, type Translate } from '@/i18n';
 import { getBadge, getStrandStages, weekStartOf, weekStats } from '@/progression';
 import { Badge, Meter, StageBadge, Stat } from '@/ui';
+import { AI_TROUBLE_AFTER, AiResults, useAiResults } from './AiResults';
 import { NoChildren } from './Children';
 import { STRAND_EMOJI } from './forms/ControlsForm';
 import { GuardedLink, useGuardedNavigate } from './guard';
@@ -60,7 +61,7 @@ function ChildCard({ data }: { data: ChildOverview }) {
   const headingId = `overview-child-${child.id}`;
 
   return (
-    <article aria-labelledby={headingId} className="flex flex-col gap-4 rounded-3xl border border-ink-200 bg-white p-5 shadow-card">
+    <article aria-labelledby={headingId} className="flex min-w-0 flex-col gap-4 rounded-3xl border border-ink-200 bg-white p-5 shadow-card">
       <div className="flex items-center gap-3">
         <Avatar emoji={child.avatar} />
         <div className="min-w-0 flex-1">
@@ -126,7 +127,7 @@ function ChildCard({ data }: { data: ChildOverview }) {
       <div className="mt-auto">
         <GuardedLink
           to={`/parent/child/${child.id}`}
-          className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border-2 border-brand-300 bg-white px-4 font-bold text-brand-700 hover:bg-brand-50"
+          className="inline-flex min-h-11 w-full min-w-0 items-center justify-center rounded-xl border-2 border-brand-300 bg-white px-4 py-2 text-center font-bold wrap-anywhere text-brand-700 hover:bg-brand-50"
         >
           {t('parent.overview.open', { name: child.nickname })}
         </GuardedLink>
@@ -175,6 +176,7 @@ export function UsageMeters({ settings }: { settings: Settings }) {
         used={usage.month.requests + usage.month.imageRequests}
         limit={settings.ai.monthlyRequestCap}
       />
+      {settings.ai.provider !== 'demo' && <AiResults />}
     </div>
   );
 }
@@ -185,6 +187,8 @@ function AiStatusCard({ settings }: { settings: Settings }) {
   // `getAiStatus` reads the stored key through `@/security`, so it runs outside a live query.
   const status = useAsync(() => getAiStatus(), [settings.updatedAt, usageToday?.requests, usageToday?.imageRequests]);
   const provider = settings.ai.provider;
+  // "Ready" only says that the AI can be asked. When its last answers were all unusable, say so here too.
+  const failuresInARow = useAiResults()?.summary.failuresInARow ?? 0;
 
   return (
     <Section
@@ -208,6 +212,10 @@ function AiStatusCard({ settings }: { settings: Settings }) {
             <p className="text-sm text-ink-500">{t('common.loading')}</p>
           ) : provider === 'demo' ? (
             <Note tone="info">{t('parent.overview.aiDemo')}</Note>
+          ) : status.ready && failuresInARow >= AI_TROUBLE_AFTER ? (
+            <Note tone="warning" role="status">
+              {t('parent.overview.aiTrouble', { model: settings.ai.chatModel, count: failuresInARow })}
+            </Note>
           ) : status.ready ? (
             <Note tone="success" role="status">
               {t('parent.overview.aiReady', { model: settings.ai.chatModel })}

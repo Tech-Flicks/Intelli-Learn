@@ -3,9 +3,9 @@
  * answer that is computed here, together with the typical mistakes. A maker returns null when
  * it has nothing suitable for the grade.
  */
-import { lead, say } from '../context';
+import { cap, lead, say } from '../context';
 import type { ProblemMaker } from '../problem';
-import { cardScene } from '../scene';
+import { bandScene, cardScene } from '../scene';
 import { problem, range, thingOf, thingScene, tidy } from './kit';
 
 // ---------------------------------------------------------------------------
@@ -138,7 +138,45 @@ const dataRep: ProblemMaker = (ctx) => {
     });
   }
   if (g <= 3) {
-    const per = rng.pick(g === 2 ? [2] : [2, 5, 10]);
+    // Grade 1 reads how many, Grade 2 how many more or fewer: one star is one vote. A key comes in Grade 3.
+    const other = rng.pick(ctx.theme.things.filter((t) => t.emoji !== thing.emoji));
+    const [few, many] = rng.sample([1, 2, 3, 4, 5, 6], 2).sort((a, b) => a - b) as [number, number];
+    const mine = rng.chance(0.5) ? many : few;
+    const theirs = mine === many ? few : many;
+    // One row for each choice, as on a real picture graph.
+    const scene = bandScene(ctx.theme.scene, [range(1, mine).map(() => ({ emoji: thing.emoji })), range(1, theirs).map(() => ({ emoji: other.emoji }))], { calm: true });
+    if (g === 2) {
+      return problem(ctx, {
+        name: 'Picture Graph',
+        intro: say(lead(ctx), `On this picture graph, each picture is one vote. There are votes for ${thing.many} and for ${other.many}.`),
+        q: `How many votes did ${thing.many} get?`,
+        a: mine,
+        unit: 'votes',
+        h: [`Look only at the ${thing.many}.`, 'Count one vote for each picture.'],
+        steps: [`Find every ${thing.one} on the graph.`, `Count them: ${range(1, mine).join(', ')}.`],
+        why: `There are ${mine} pictures of ${thing.many}, and each picture is one vote.`,
+        wrong: [[theirs, `That is the number of votes for ${other.many}.`], [mine + theirs, `Count only the ${thing.many}.`], [mine + 1, 'Count each picture only once.']],
+        teach: ['What does one picture on a picture graph show?', 'One vote.', 'One page.', 'One color.'],
+        scene,
+      });
+    }
+    const more = mine > theirs;
+    return problem(ctx, {
+      name: 'Picture Graph',
+      intro: say(lead(ctx), `On this picture graph, each picture is one vote. One row shows the votes for ${thing.many}, the other the votes for ${other.many}.`),
+      q: `How many ${more ? 'more' : 'fewer'} votes did ${thing.many} get than ${other.many}?`,
+      a: many - few,
+      unit: 'votes',
+      h: ['Count the pictures in each row first.', 'Subtract the smaller number from the bigger one.'],
+      steps: [`${cap(thing.many)}: ${mine} ${mine === 1 ? 'vote' : 'votes'}.`, `${cap(other.many)}: ${theirs} ${theirs === 1 ? 'vote' : 'votes'}.`, `${many} − ${few} = ${many - few}.`],
+      why: `${many} − ${few} = ${many - few}, so ${thing.many} got ${many - few} ${more ? 'more' : 'fewer'} ${many - few === 1 ? 'vote' : 'votes'}.`,
+      wrong: [[many + few, 'How many more or fewer asks for the difference, not the total.'], [mine, `That is how many votes ${thing.many} got.`], [theirs, `That is how many votes ${other.many} got.`]],
+      teach: ['How do you find how many more?', 'Subtract the smaller number from the bigger one.', 'Add the two numbers.', 'Pick the bigger number.'],
+      scene,
+    });
+  }
+  if (g === 4) {
+    const per = rng.pick([2, 5, 10]);
     const stars = rng.int(2, 6);
     return problem(ctx, {
       name: 'Picture Graph',

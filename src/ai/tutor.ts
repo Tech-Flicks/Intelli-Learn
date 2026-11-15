@@ -11,9 +11,10 @@ import { TutorReplySchema, type TutorReply } from '@/core/schemas';
 import type { Locale } from '@/core/types';
 import { chatJson } from './client';
 import { loadAiConfig } from './config';
+import { noteAiFailure } from './diagnostics';
 import { revealsAnswer } from './leak';
 import { buildTutorPrompt, walkthroughIndex } from './prompts';
-import { foldText, localSafetyCheck } from './safety';
+import { foldText, localSafetyCheck, moderateTexts } from './safety';
 import type { TutorIntent, TutorRequest } from './types';
 
 interface Phrases {
@@ -238,6 +239,8 @@ export function checkTutorReply(req: TutorRequest, raw: TutorReply): TutorReply 
  */
 export async function tutorReply(req: TutorRequest): Promise<TutorReply> {
   const fallback = offlineTutorReply(req);
+  const started = Date.now();
+  let model = '';
   try {
     if (req.signal?.aborted || req.intent === 'praise') return fallback;
     if (req.intent === 'chat') {
@@ -247,6 +250,7 @@ export async function tutorReply(req: TutorRequest): Promise<TutorReply> {
     }
     const loaded = await loadAiConfig();
     if (!loaded.ok) return fallback;
+    model = loaded.config.chatModel;
 
     const history = (req.history ?? []).filter(
       (turn) => turn.role === 'bot' || localSafetyCheck(turn.text, req.child.strictness).safe,
@@ -263,12 +267,21 @@ export async function tutorReply(req: TutorRequest): Promise<TutorReply> {
         config: loaded.config,
         maxTokens: TUTOR_MAX_TOKENS,
         timeoutMs: TUTOR_TIMEOUT_MS,
+        // A slow endpoint gets twice as long, not more: the child is waiting, and the reply
+        // from the challenge's own hints is ready at once.
+        maxTimeoutScale: 2,
         attempts: 2,
         transportRetries: 0,
       },
     );
-    return checkTutorReply(req, raw) ?? fallback;
-  } catch {
+    const checked = checkTutorReply(req, raw);
+    if (!checked) return fallback;
+    // Open chat is the one place where the child's own words steer the model: its reply gets
+    // the moderation service's opinion as well (when the endpoint has one) before it is shown.
+    if (req.intent === 'chat' && !(await moderateTexts([checked.say], req.child.strictness)).safe) return fallback;
+    return checked;
+  } catch (error) {
+    await noteAiFailure('tutor', model, error, started);
     return fallback;
   }
 }

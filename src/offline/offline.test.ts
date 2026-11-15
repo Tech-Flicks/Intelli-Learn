@@ -4,7 +4,7 @@ import { makeStage, stageGradeIndex } from '@/core/grades';
 import { SKILLS, getSkill, skillExistsAt } from '@/core/skills';
 import { GRADES, STRANDS, type ChallengePlan, type Grade, type InteractionKind, type Mode, type Strand } from '@/core/types';
 import { problemsOf } from './check';
-import { CURATED, OFFLINE_BANK_SIZE, pickOfflineChallenge, pickOfflineStory } from './index';
+import { CURATED, OFFLINE_BANK_SIZE, pickOfflineChallenge, pickOfflineStory, pickOwnSkillChallenge } from './index';
 import { ALL_SETS } from './sets';
 
 const KINDS: InteractionKind[] = ['choice', 'tap', 'sort', 'match', 'order', 'number', 'robot', 'build'];
@@ -62,6 +62,12 @@ function semanticProblems(c: Challenge): string[] {
   const ids = new Set(c.scene.objects.map((o) => o.id));
   if (ids.size !== c.scene.objects.length) out.push('duplicate scene ids');
   if (c.scene.objects.length < 3 || c.scene.objects.length > 15) out.push('scene size');
+  // A corner decoration must not look like something the scene shows: a child who counts would count it too.
+  const plain = (emoji: string | undefined): string => (emoji ?? '').replace(/\uFE0F/g, '');
+  const shown = new Set(c.scene.objects.filter((o) => !o.id.startsWith('decor-') && o.type === 'emoji').map((o) => plain(o.emoji)));
+  for (const o of c.scene.objects) {
+    if (o.id.startsWith('decor-') && shown.has(plain(o.emoji))) out.push(`decoration ${o.emoji ?? ''} repeats a scene object`);
+  }
   for (const o of c.scene.objects) {
     if (o.x < 0 || o.x > 100 || o.y < 0 || o.y > 100) out.push('object outside the scene');
     if (o.type === 'svg') out.push('svg object');
@@ -185,6 +191,27 @@ describe('pickOfflineChallenge', () => {
     }
   }, 60_000);
 
+  it('shows exactly as many objects as a counting question asks for, in every theme', () => {
+    const themes = ['ocean', 'forest', 'space', 'farm', 'something unknown', ''];
+    let counted = 0;
+    for (const grade of ['PK', 'K', '1'] as const) {
+      for (const theme of themes) {
+        for (let seed = 1; seed <= 25; seed += 1) {
+          const plan = planOf('math-counting-cardinality', 'math', grade, 'number', 'quest', theme);
+          const c = pickOfflineChallenge(plan, { seed });
+          if (c.interaction.kind !== 'number' || !/^How many .+ can you see\?$/.test(c.question)) continue;
+          const groups = new Map<string, number>();
+          for (const o of c.scene.objects) if (o.type === 'emoji' && o.emoji) groups.set(o.emoji, (groups.get(o.emoji) ?? 0) + 1);
+          // Whatever is drawn most often is what is counted; no other group may come to the same number by accident of decoration.
+          expect([...groups.values()], `${grade} ${theme} seed ${seed}: ${c.question}`).toContain(c.interaction.answer);
+          expect(Math.max(...groups.values()), `${grade} ${theme} seed ${seed}: ${c.question}`).toBeLessThanOrEqual(Math.max(c.interaction.answer, 2));
+          counted += 1;
+        }
+      }
+    }
+    expect(counted).toBeGreaterThan(20);
+  });
+
   it('keeps every text of a Pre-K or Kindergarten challenge to one short sentence', () => {
     const tooLong: string[] = [];
     for (const skill of SKILLS) {
@@ -216,6 +243,97 @@ describe('pickOfflineChallenge', () => {
       expect(answerAt('4', seed)).toBeGreaterThan(20);
     }
     expect(stageGradeIndex(makeStage('4', 'growing'))).toBe(5);
+  });
+
+  it('gives a Pre-K or Kindergarten child pictures to add, never written sums or a "does not" task', () => {
+    const shownTexts = (c: Challenge): string[] => {
+      const i = c.interaction;
+      const texts = c.scene.objects.flatMap((o) => [o.text ?? '', o.label ?? '']);
+      if (i.kind === 'choice') texts.push(...i.options.map((o) => o.label));
+      if (i.kind === 'sort') texts.push(...i.items.map((o) => (o.emoji ? '' : o.label)));
+      if (i.kind === 'match') texts.push(...i.pairs.flatMap((pair) => [pair.left.emoji ? '' : pair.left.label, pair.right.emoji ? '' : pair.right.label]));
+      if (i.kind === 'order') texts.push(...i.items.map((o) => (o.emoji ? '' : o.label)));
+      return texts;
+    };
+    const bad: string[] = [];
+    let makes = 0;
+    for (const grade of ['PK', 'K'] as const) {
+      const skill = SKILLS.find((entry) => entry.id === 'math-addition-subtraction') as (typeof SKILLS)[number];
+      for (const kind of skill.interactions) {
+        for (let seed = 1; seed <= 60; seed += 1) {
+          const plan = planOf(skill.id, 'math', grade, kind);
+          for (const c of [pickOfflineChallenge(plan, { seed }), pickOwnSkillChallenge(plan, { seed })]) {
+            if (c === null) continue;
+            const where = `${grade} ${kind} seed ${seed} "${c.title}"`;
+            if (/^Make \d/.test(c.title) || /Make \d+$/.test(c.title)) makes += 1;
+            if (shownTexts(c).some((text) => /\d\s*[+−-]\s*\d/.test(text))) bad.push(`${where}: a written sum to read`);
+            if (/\b(do|does) not make\b/i.test(c.question)) bad.push(`${where}: ${c.question}`);
+            if (/\bnot\b.*\bnot\b/i.test(c.explanation)) bad.push(`${where}: ${c.explanation}`);
+            for (const text of shownTexts(c)) {
+              const total = /^(\d+) plus (\d+)$/i.exec(text);
+              if (total && Number(total[1]) + Number(total[2]) > 5) bad.push(`${where}: ${text} is more than 5`);
+            }
+          }
+        }
+      }
+    }
+    expect([...new Set(bad)]).toEqual([]);
+    // The "make a total" set is still served to these grades: it was rewritten, not dropped.
+    expect(makes).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('sorts small and big numbers within 5 at Pre-K', () => {
+    let seen = 0;
+    for (const kind of ['sort', 'tap', 'choice', 'match', 'number'] as const) {
+      for (let seed = 1; seed <= 60; seed += 1) {
+        const c = pickOfflineChallenge(planOf('math-counting-cardinality', 'math', 'PK', kind), { seed });
+        if (!/small|big/i.test(`${c.question} ${c.intro}`) || !/number/i.test(`${c.intro} ${c.explanation}`)) continue;
+        const numbers = [
+          ...c.scene.objects.map((o) => o.text ?? ''),
+          ...(c.interaction.kind === 'sort' ? c.interaction.items.map((o) => o.label) : []),
+          ...(c.interaction.kind === 'choice' ? c.interaction.options.map((o) => o.label) : []),
+          ...(c.interaction.kind === 'match' ? c.interaction.pairs.map((pair) => pair.left.label) : []),
+        ].filter((text) => /^\d+$/.test(text)).map(Number);
+        if (numbers.length === 0) continue;
+        seen += 1;
+        expect(Math.max(...numbers), `${kind} seed ${seed} "${c.title}": ${numbers.join(', ')}`).toBeLessThanOrEqual(5);
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
+  it('reads a picture graph the way the grade does: one picture for one vote first, a key only from Grade 3', () => {
+    const graphs = (grade: Grade): Challenge[] => {
+      const out: Challenge[] = [];
+      for (let seed = 1; seed <= 80; seed += 1) {
+        const c = pickOwnSkillChallenge(planOf('technology-data-representation', 'technology', grade, 'number'), { seed });
+        if (c !== null && /graph/i.test(`${c.title} ${c.intro}`)) out.push(c);
+      }
+      return out;
+    };
+    const first = graphs('1');
+    const second = graphs('2');
+    const third = graphs('3');
+    expect(first.length).toBeGreaterThan(0);
+    expect(second.length).toBeGreaterThan(0);
+    expect(third.length).toBeGreaterThan(0);
+    const scaled = (c: Challenge): boolean => /stands for (?!one\b|1\b)\w+ votes/i.test(c.intro) || c.scene.objects.some((o) => /= (?!1 vote\b)\d+ votes/.test(o.text ?? ''));
+    for (const c of first) {
+      expect(scaled(c), c.intro).toBe(false);
+      expect(c.question).toMatch(/^How many votes/);
+    }
+    for (const c of second) {
+      expect(scaled(c), c.intro).toBe(false);
+      expect(c.question).toMatch(/how many (more|fewer)/i);
+    }
+    expect(third.some(scaled)).toBe(true);
+    // Binary numbers are Grade 4 work: nothing about bits is asked below that.
+    for (const grade of ['1', '2', '3'] as const) {
+      for (let seed = 1; seed <= 40; seed += 1) {
+        const c = pickOwnSkillChallenge(planOf('technology-data-representation', 'technology', grade, 'number'), { seed });
+        if (c !== null) expect(`${c.title} ${c.intro} ${c.question}`, `grade ${grade} seed ${seed}`).not.toMatch(/binary|\bbits?\b/i);
+      }
+    }
   });
 
   it('is deterministic for a fixed seed and varies between seeds', () => {
@@ -283,6 +401,71 @@ describe('pickOfflineChallenge', () => {
   });
 });
 
+describe('pickOwnSkillChallenge', () => {
+  const combos = SKILLS.flatMap((skill) =>
+    GRADES.filter((grade) => skillExistsAt(skill, grade)).flatMap((grade) =>
+      skill.interactions.map((kind) => ({ skill, grade, kind })),
+    ),
+  );
+
+  it('returns a sound challenge of the planned kind, or null when the bank has nothing for the skill itself', () => {
+    let empty = 0;
+    for (const { skill, grade, kind } of combos) {
+      const made = pickOwnSkillChallenge(planOf(skill.id, skill.strand, grade, kind), { seed: 5 });
+      if (made === null) {
+        empty += 1;
+        continue;
+      }
+      expect(made.interaction.kind).toBe(kind);
+      expect(problemsOf(made)).toEqual([]);
+      expect(ChallengeSchema.safeParse(made).success).toBe(true);
+    }
+    // Most of the map is covered; the gaps are known (see docs/ARCHITECTURE.md) and must not grow.
+    expect(empty / combos.length).toBeLessThan(0.15);
+  });
+
+  it('never borrows from another skill: where the wide search would, it returns null', () => {
+    // No ordering content was written for deduction; the wide search serves a neighbour's sequence.
+    for (const grade of ['K', '3', '6'] as const) {
+      const plan = planOf('logic-deduction', 'logic', grade, 'order');
+      expect(pickOwnSkillChallenge(plan, { seed: 3 })).toBeNull();
+      expect(pickOfflineChallenge(plan, { seed: 3 }).interaction.kind).toBe('order');
+    }
+  });
+
+  it('has something for every skill at every grade in at least one of its kinds', () => {
+    const bare: string[] = [];
+    for (const skill of SKILLS) {
+      for (const grade of GRADES.filter((g) => skillExistsAt(skill, g))) {
+        const some = skill.interactions.some((kind) => pickOwnSkillChallenge(planOf(skill.id, skill.strand, grade, kind), { seed: 9 }) !== null);
+        if (!some) bare.push(`${skill.id}@${grade}`);
+      }
+    }
+    expect(bare).toEqual([]);
+  });
+
+  it('leaves out what the caller does not accept and moves on to something else', () => {
+    const plan = planOf('science-living-things', 'science', '1', 'order');
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i += 1) {
+      const made = pickOwnSkillChallenge(plan, { seed: 40 + i, accept: (c) => !seen.has(c.question + JSON.stringify(c.interaction)) });
+      if (made === null) break;
+      const key = made.question + JSON.stringify(made.interaction);
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+    expect(seen.size).toBeGreaterThan(1);
+    expect(pickOwnSkillChallenge(plan, { seed: 1, accept: () => false })).toBeNull();
+  });
+
+  it('serves a fix-the-bot item as own content only for the debugging skill', () => {
+    const math = planOf('math-place-value', 'math', '3', 'choice', 'fixbot');
+    for (let seed = 1; seed <= 10; seed += 1) {
+      expect(pickOwnSkillChallenge(math, { seed })?.title ?? '').not.toMatch(/^Fix .* the Bot$/);
+    }
+  });
+});
+
 describe('CURATED', () => {
   it('holds at least 40 sound, hand-written items with unique ids and titles', () => {
     expect(OFFLINE_BANK_SIZE).toBe(CURATED.length);
@@ -337,6 +520,28 @@ describe('knowledge sets', () => {
       }
       if (set.type === 'pair') expect(set.pairs.length, set.id).toBeGreaterThanOrEqual(3);
       if (set.type === 'seq') expect(set.items.length, set.id).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('keeps the answers of a matching set apart: no two of them fit the same question', () => {
+    // "What do you use on a snowy day?" must not offer mittens next to a scarf, and a monkey's
+    // rainforest must not sit next to a squirrel's forest: each of these would be right twice.
+    const tooClose: [string, string[]][] = [
+      ['sci-weather-gear', ['snowy', 'cold', 'icy', 'frosty']],
+      ['sci-weather-gear', ['mittens', 'scarf', 'warm coat', 'gloves']],
+      ['sci-habitats', ['rainforest', 'forest', 'jungle', 'woods']],
+    ];
+    for (const [id, group] of tooClose) {
+      const set = ALL_SETS.find((entry) => entry.id === id);
+      if (!set || set.type !== 'pair') throw new Error(`${id} is not a pair set`);
+      const labels = set.pairs.flatMap((pair) => [pair.left.label, pair.right.label]);
+      expect(labels.filter((label) => group.includes(label)), id).toHaveLength(1);
+    }
+    // In every pair set an answer belongs to one question only.
+    for (const set of ALL_SETS) {
+      if (set.type !== 'pair') continue;
+      const rights = set.pairs.map((pair) => pair.right.label.toLowerCase());
+      expect(new Set(rights).size, set.id).toBe(rights.length);
     }
   });
 

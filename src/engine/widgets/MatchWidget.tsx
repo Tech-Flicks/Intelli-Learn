@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { MatchInteraction } from '@/core/schemas';
 import { shuffleAwayFrom } from '../shuffle';
 import type { WidgetProps } from './ChoiceWidget';
-import { cx, EmojiLabel, fill, FOCUS_RING, HINT_GLOW } from './common';
+import { cx, fill, FOCUS_RING, HINT_GLOW, TOUCH_HOLD_MS, useTouchScrollLock } from './common';
 
 /** One colour and one number per connection, so colour is never the only cue. */
 const LINK_COLORS = ['#5b4bdb', '#d9483a', '#1f8f5c', '#c98a00', '#0f7fb5', '#b0368f'] as const;
@@ -19,6 +19,9 @@ interface Line {
  * Two columns. Tap a card on the left, then its partner on the right (or drag
  * from left to right). Tap a connected card again to undo. Lines are drawn in
  * an SVG overlay that ignores the pointer.
+ *
+ * Under a finger a line is drawn by dragging sideways; a swipe up or down that
+ * starts on a card scrolls the page.
  */
 export function MatchWidget({ interaction, value, onChange, disabled, highlight, labels }: WidgetProps<MatchInteraction, Record<string, string>>): JSX.Element {
   const [activeLeft, setActiveLeft] = useState<string | null>(null);
@@ -27,8 +30,18 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
   const containerRef = useRef<HTMLDivElement>(null);
   const leftRefs = useRef(new Map<string, HTMLButtonElement>());
   const rightRefs = useRef(new Map<string, HTMLButtonElement>());
-  const dragFrom = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  const dragFrom = useRef<{ id: string; x: number; y: number; moved: boolean; touch: boolean; held: boolean } | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const swallowClick = useRef(false);
+  // While a line is being drawn (or the finger rests on a card, about to draw one), its moves do not scroll the page.
+  const lockFor = useTouchScrollLock(() => dragFrom.current !== null && dragFrom.current.touch && (dragFrom.current.moved || dragFrom.current.held));
+
+  const endDrag = useCallback(() => {
+    if (holdTimer.current !== null) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+    dragFrom.current = null;
+  }, []);
+  useEffect(() => endDrag, [endDrag]);
 
   /** The right column is shown in a stable, mixed-up order. */
   const rights = useMemo(
@@ -136,8 +149,21 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
 
   // Dragging a line from a left card to a right card.
   const onLeftPointerDown = (leftId: string, event: ReactPointerEvent<HTMLButtonElement>): void => {
+    // A touch drag is followed by no click, so a flag left over from the last drag would
+    // swallow this press: every press starts clean.
+    swallowClick.current = false;
     if (disabled || (event.pointerType === 'mouse' && event.button !== 0)) return;
-    dragFrom.current = { id: leftId, x: event.clientX, y: event.clientY, moved: false };
+    endDrag();
+    const touch = event.pointerType === 'touch';
+    const from = { id: leftId, x: event.clientX, y: event.clientY, moved: false, touch, held: !touch };
+    dragFrom.current = from;
+    if (touch) {
+      // A finger that rests on the card for a moment is about to draw a line, in any direction.
+      holdTimer.current = setTimeout(() => {
+        holdTimer.current = null;
+        if (dragFrom.current === from) from.held = true;
+      }, TOUCH_HOLD_MS);
+    }
     try {
       event.currentTarget.setPointerCapture?.(event.pointerId);
     } catch {
@@ -149,7 +175,16 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
     const from = dragFrom.current;
     const container = containerRef.current;
     if (!from || !container) return;
-    if (!from.moved && Math.hypot(event.clientX - from.x, event.clientY - from.y) < 8) return;
+    if (!from.moved) {
+      const dx = Math.abs(event.clientX - from.x);
+      const dy = Math.abs(event.clientY - from.y);
+      if (Math.hypot(dx, dy) < 8) return;
+      // A finger that sets off up or down at once is scrolling the page, not drawing a line.
+      if (!from.held && dy > dx) {
+        endDrag();
+        return;
+      }
+    }
     from.moved = true;
     const box = container.getBoundingClientRect();
     const l = event.currentTarget.getBoundingClientRect();
@@ -163,7 +198,7 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
 
   const onLeftPointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     const from = dragFrom.current;
-    dragFrom.current = null;
+    endDrag();
     setRubber(null);
     if (!from || !from.moved) return;
     swallowClick.current = true;
@@ -177,19 +212,35 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
     }
   };
 
+  // The number of a connection sits on the card's corner: it takes no room from the label.
   const badge = (index: number): JSX.Element => (
     <span
       aria-hidden="true"
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-extrabold text-white"
+      data-match-badge=""
+      className="absolute -top-2.5 -left-2.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-extrabold text-white ring-2 ring-white"
       style={{ backgroundColor: LINK_COLORS[index % LINK_COLORS.length] }}
     >
       {index + 1}
     </span>
   );
 
+  // On a phone the picture sits above the word, so a short word is never broken in two.
+  const face = (emoji: string | undefined, label: string): JSX.Element => (
+    <span className="flex min-w-0 flex-1 flex-col items-center gap-1 text-center sm:flex-row sm:gap-2 sm:text-left">
+      {emoji ? (
+        <span aria-hidden="true" className="shrink-0 text-2xl leading-none">
+          {emoji}
+        </span>
+      ) : null}
+      <span data-match-label="" className="max-w-full min-w-0 wrap-anywhere">
+        {label}
+      </span>
+    </span>
+  );
+
   const cardClass = (linked: boolean, active: boolean, glow: boolean): string =>
     cx(
-      'flex min-h-16 w-full items-center gap-2 rounded-2xl border-4 bg-white px-3 py-2 text-left text-lg font-bold text-ink-900 shadow-sm transition-colors',
+      'relative flex min-h-16 w-full items-center gap-2 rounded-2xl border-4 bg-white px-2 py-2 text-left text-lg font-bold text-ink-900 shadow-sm transition-colors sm:px-3',
       active ? 'border-brand-500 bg-brand-100' : linked ? 'border-leaf-400' : 'border-brand-100',
       glow && HINT_GLOW,
       FOCUS_RING,
@@ -198,7 +249,7 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
   return (
     <div className="flex flex-col gap-3">
       <p className="text-base font-semibold text-ink-500">{labels.matchHint}</p>
-      <div ref={containerRef} className="relative grid grid-cols-2 gap-x-10 gap-y-3 sm:gap-x-16">
+      <div ref={containerRef} className="relative grid grid-cols-2 gap-x-8 gap-y-3 sm:gap-x-16">
         <ul className="flex list-none flex-col gap-3 p-0" aria-label={labels.matchLeft}>
           {interaction.pairs.map((pair) => {
             const rightId = value[pair.id];
@@ -211,6 +262,7 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
                   ref={(el) => {
                     if (el) leftRefs.current.set(pair.id, el);
                     else leftRefs.current.delete(pair.id);
+                    lockFor(pair.id)(el);
                   }}
                   disabled={disabled}
                   aria-pressed={activeLeft === pair.id}
@@ -220,14 +272,15 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
                   onPointerMove={onLeftPointerMove}
                   onPointerUp={onLeftPointerUp}
                   onPointerCancel={() => {
-                    dragFrom.current = null;
+                    endDrag();
                     setRubber(null);
                   }}
-                  style={{ touchAction: 'none' }}
-                  className={cardClass(rightId !== undefined, activeLeft === pair.id, highlight.has(pair.id))}
+                  // Sideways the finger draws a line; up and down it scrolls the page.
+                  style={{ touchAction: 'pan-y' }}
+                  className={cx(cardClass(rightId !== undefined, activeLeft === pair.id, highlight.has(pair.id)), 'select-none [-webkit-touch-callout:none]')}
                 >
                   {index !== undefined ? badge(index) : null}
-                  <EmojiLabel emoji={pair.left.emoji} label={pair.left.label} />
+                  {face(pair.left.emoji, pair.left.label)}
                 </button>
               </li>
             );
@@ -253,7 +306,7 @@ export function MatchWidget({ interaction, value, onChange, disabled, highlight,
                   className={cardClass(owner !== undefined, false, false)}
                 >
                   {index !== undefined ? badge(index) : null}
-                  <EmojiLabel emoji={right.emoji} label={right.label} />
+                  {face(right.emoji, right.label)}
                 </button>
               </li>
             );

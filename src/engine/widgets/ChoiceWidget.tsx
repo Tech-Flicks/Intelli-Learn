@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { motion } from 'motion/react';
 import type { ChoiceInteraction } from '@/core/schemas';
-import { cx, FOCUS_RING, HINT_GLOW, type StageLabels } from './common';
+import { cx, FOCUS_RING, hasLongWord, HINT_GLOW, type StageLabels } from './common';
 
 export interface WidgetProps<I, V> {
   interaction: I;
@@ -24,7 +24,9 @@ export function ChoiceWidget({ interaction, value, onChange, disabled, highlight
       onChange(value.includes(id) ? [] : [id]);
     }
   };
-  const columns = interaction.options.length > 2 ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2';
+  // Two columns, unless there are only two options or a label holds a word too long for half a phone screen.
+  const roomy = interaction.options.length <= 2 || hasLongWord(interaction.options.map((option) => option.label));
+  const columns = roomy ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2';
   return (
     <div className="flex flex-col gap-3">
       <p className="text-base font-semibold text-ink-500">{interaction.multi ? labels.pickMany : labels.pickOne}</p>
@@ -42,7 +44,7 @@ export function ChoiceWidget({ interaction, value, onChange, disabled, highlight
               aria-pressed={picked}
               onClick={() => toggle(option.id)}
               className={cx(
-                'relative flex min-h-20 flex-col items-center justify-center gap-1 rounded-3xl border-4 px-3 py-3 text-center text-xl font-bold shadow-sm transition-colors',
+                'relative flex min-h-20 min-w-0 flex-col items-center justify-center gap-1 rounded-3xl border-4 px-3 py-3 text-center text-xl font-bold shadow-sm transition-colors',
                 picked ? 'border-brand-500 bg-brand-100 text-brand-700' : 'border-brand-100 bg-white text-ink-900 hover:border-brand-300',
                 disabled && 'opacity-70',
                 highlight.has(option.id) && HINT_GLOW,
@@ -54,7 +56,8 @@ export function ChoiceWidget({ interaction, value, onChange, disabled, highlight
                   {option.emoji}
                 </span>
               ) : null}
-              <span className="break-words">{option.label}</span>
+              {/* A word that is wider than the card breaks inside it; it never runs out of the card. */}
+              <span className="max-w-full min-w-0 wrap-anywhere">{option.label}</span>
               {picked ? (
                 <span
                   aria-hidden="true"

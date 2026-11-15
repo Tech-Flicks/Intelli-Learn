@@ -6,7 +6,7 @@
  * twice returns the stored attempt without awarding anything again.
  */
 import Dexie from 'dexie';
-import { makeStage, newId } from '@/core/grades';
+import { clampStage, makeStage, newId } from '@/core/grades';
 import { getSkill } from '@/core/skills';
 import { STRANDS } from '@/core/types';
 import type {
@@ -23,7 +23,7 @@ import type {
 import { db } from '@/data';
 import { badgeReason } from './catalog';
 import { aggregateStrandStage, applyAttempt, clampToSkill, newSkillState, skillStateId } from './mastery';
-import { detectFrustration, outcomeOf, wrongTries } from './outcome';
+import { answerSpace, creditedOutcome, detectFrustration, outcomeOf, wrongTries } from './outcome';
 import {
   applyPlacementAttempt,
   isPlacementComplete,
@@ -57,6 +57,15 @@ export interface RecordAttemptInput {
   teachBackCorrect: boolean | null;
   timeMs: number;
   now?: number;
+}
+
+/**
+ * What `recordAttempt` returns. `alreadyRecorded` is true when the challenge had been recorded
+ * before (the same challenge was open in two tabs, or a caller tried again): this call wrote and
+ * awarded nothing, and the caller must not count the attempt a second time either.
+ */
+export interface RecordedAttempt extends AttemptResult {
+  alreadyRecorded?: boolean;
 }
 
 function strandChange(
@@ -111,7 +120,7 @@ async function storedResult(attempt: AttemptRecord, child: ChildProfile | undefi
  * Writes the attempt, updates skill state, stage history, rewards, streak and
  * companion, and marks the challenge completed. Idempotent per challenge.
  */
-export async function recordAttempt(input: RecordAttemptInput): Promise<AttemptResult> {
+export async function recordAttempt(input: RecordAttemptInput): Promise<RecordedAttempt> {
   const now = input.now ?? Date.now();
   const { challenge } = input;
   const { childId, skillId } = challenge;
@@ -119,15 +128,18 @@ export async function recordAttempt(input: RecordAttemptInput): Promise<AttemptR
   return db.transaction(
     'rw',
     [db.children, db.skillStates, db.stageChanges, db.challenges, db.attempts, db.rewards, db.sessions, db.kv],
-    async (): Promise<AttemptResult> => {
+    async (): Promise<RecordedAttempt> => {
       const child = await db.children.get(childId);
       const already = await db.attempts.where('challengeId').equals(challenge.id).first();
-      if (already) return storedResult(already, child);
+      if (already) return { ...(await storedResult(already, child)), alreadyRecorded: true };
       if (!child) throw new Error(`Child profile not found: ${childId}`);
 
       const skill = getSkill(skillId);
       const strand = skill?.strand ?? challenge.strand;
       const outcome = outcomeOf(input);
+      // Stars, badges and the history go by what happened; mastery, checks and placement go by
+      // what it shows: an answer found by trying the options is not credited as solved alone.
+      const credited = creditedOutcome(outcome, wrongTries(input.answers), answerSpace(challenge.content));
       const stars = starsFor(outcome, input.teachBackCorrect);
       const attempt: AttemptRecord = {
         id: newId('att'),
@@ -178,8 +190,8 @@ export async function recordAttempt(input: RecordAttemptInput): Promise<AttemptR
         const placement = applyPlacementAttempt(
           runningPlacement(storedPlacement),
           child.grade,
-          { skillId, strand, interaction: challenge.interaction },
-          outcome,
+          { skillId, strand, interaction: challenge.interaction, stage: clampStage(challenge.stage) },
+          credited,
         );
         await writePlacement(childId, placement);
         const seeded = seedPlacementStates(placement, child, statesBefore, now);
@@ -205,7 +217,7 @@ export async function recordAttempt(input: RecordAttemptInput): Promise<AttemptR
           newSkillState(childId, skillId, strand, clampToSkill(skill, startStage));
         const update = applyAttempt(previous, skill, {
           purpose: challenge.purpose,
-          outcome,
+          outcome: credited,
           teachBackCorrect: input.teachBackCorrect,
           interaction: challenge.interaction,
           now,
@@ -319,7 +331,7 @@ export async function recordAttempt(input: RecordAttemptInput): Promise<AttemptR
       const current = openSessions[openSessions.length - 1];
       if (current) await db.sessions.update(current.id, { itemsCompleted: current.itemsCompleted + 1 });
 
-      return { attempt, skillState, masteryDelta, stageChanges, rewards, suggestBreak };
+      return { attempt, skillState, masteryDelta, stageChanges, rewards, suggestBreak, alreadyRecorded: false };
     },
   );
 }

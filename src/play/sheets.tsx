@@ -4,9 +4,12 @@
  *
  * A sheet comes from the bottom on phones and upright tablets and sits at the
  * right on wide screens, so the canvas stays in view on anything tablet-sized.
+ * On a phone held sideways (a short, wide screen) it may use the whole height
+ * below the top bar, with its button beside the content (see play.css). When
+ * there is more than fits, a round button at its lower edge says so.
  * None of them has a way to skip a challenge.
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState, type JSX, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type JSX, type ReactNode } from 'react';
 import { motion } from 'motion/react';
 import type { ChildProfile } from '@/core/types';
 import { hasString, stageName, strandName, t as translate, tn, useT } from '@/i18n';
@@ -26,6 +29,11 @@ const SHEET_TONE: Record<SheetTone, string> = {
   sky: 'border-sky-400',
 };
 
+/** True when a scroll area holds content below what is in view (more than a few pixels of it). */
+export function hasMoreBelow(el: Pick<HTMLElement, 'scrollTop' | 'clientHeight' | 'scrollHeight'>): boolean {
+  return el.scrollHeight - el.clientHeight - el.scrollTop > 12;
+}
+
 /** The frame of every sheet. Takes the focus when it opens, so keyboard and screen-reader users land in it. */
 export function Sheet(props: {
   labelledBy: string;
@@ -38,10 +46,30 @@ export function Sheet(props: {
 }): JSX.Element {
   const { labelledBy, tone = 'brand', testId, low = false, footer, children } = props;
   const calm = useReducedMotion();
+  const t = useT();
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
     ref.current?.focus({ preventScroll: true });
   }, []);
+
+  // More content than fits: nothing would show it (a child would see a teach-back with one
+  // answer, or rewards without stars), so a button at the lower edge says so and scrolls on.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  const measure = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) setMore(hasMoreBelow(el));
+  }, []);
+  useLayoutEffect(() => {
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    if (scrollRef.current) observer.observe(scrollRef.current);
+    if (contentRef.current) observer.observe(contentRef.current);
+    return () => observer.disconnect();
+  }, [measure]);
+
   return (
     <motion.section
       ref={ref}
@@ -54,7 +82,7 @@ export function Sheet(props: {
       animate={{ y: 0, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 320, damping: 30 }}
       className={cx(
-        'fixed inset-x-0 bottom-0 z-30 mx-auto flex w-full max-w-2xl flex-col rounded-t-[2rem] border-4 border-b-0 bg-white text-ink-900 shadow-lift outline-none',
+        'play-sheet fixed inset-x-0 bottom-0 z-30 mx-auto flex w-full max-w-2xl flex-col rounded-t-[2rem] border-4 border-b-0 bg-white text-ink-900 shadow-lift outline-none',
         // A tall sheet stops below Pip's home in the top right corner.
         low ? 'max-h-[52dvh]' : 'max-h-[calc(100dvh-10.5rem)]',
         'sm:bottom-4 sm:max-h-[56dvh] sm:w-[calc(100%-2rem)] sm:rounded-[2rem] sm:border-b-4',
@@ -62,8 +90,39 @@ export function Sheet(props: {
         SHEET_TONE[tone],
       )}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-2">{children}</div>
-      {footer !== undefined && <div className="flex flex-col gap-2 px-5 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">{footer}</div>}
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={scrollRef} onScroll={measure} data-sheet-scroll="" className="min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-2">
+          <div ref={contentRef}>{children}</div>
+        </div>
+        {more && (
+          <>
+            <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-14 rounded-b-[1.5rem] bg-gradient-to-t from-white to-white/0" />
+            <button
+              type="button"
+              data-sheet-more=""
+              aria-label={t('play.sheet.more')}
+              onClick={() => {
+                const el = scrollRef.current;
+                el?.scrollBy?.({ top: Math.max(80, el.clientHeight - 64), behavior: calm ? 'auto' : 'smooth' });
+              }}
+              className="absolute right-3 bottom-1 flex h-12 w-12 items-center justify-center rounded-full border-2 border-brand-300 bg-white font-display text-2xl leading-none font-bold text-brand-700 shadow-card"
+            >
+              <span aria-hidden="true" className={cx(!calm && 'animate-bounce')}>
+                ↓
+              </span>
+            </button>
+          </>
+        )}
+      </div>
+      {/* Without a footer the column stays (on a short, wide screen only): its top is Pip's place while a sheet is open. */}
+      <div
+        className={cx(
+          'play-sheet-footer flex-col gap-2 px-5 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]',
+          footer !== undefined ? 'flex' : 'play-sheet-footer-empty hidden',
+        )}
+      >
+        {footer}
+      </div>
     </motion.section>
   );
 }
@@ -378,7 +437,7 @@ export function SolvedSheet({ child, onHome }: { child: ChildProfile | undefined
             <InfoCard emoji="🎓" title={t('play.teach.title')} tone="border-brand-300 bg-brand-50">
               {content.teachBack.prompt}
             </InfoCard>
-            <div className="flex flex-col gap-2">
+            <div className="play-teach-options flex flex-col gap-2">
               {content.teachBack.options.map((option) => (
                 <button
                   key={option.id}

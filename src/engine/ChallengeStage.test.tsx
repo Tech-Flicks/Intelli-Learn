@@ -150,6 +150,18 @@ describe('ChallengeStage: number', () => {
   });
 });
 
+describe('ChallengeStage: number keypad layout', () => {
+  it('lays every key out as a cell of the keypad grid, also the decimal point of a negative decimal', () => {
+    setup(makeChallenge({ kind: 'number', answer: -2.5, allowDecimal: true, allowNegative: true }));
+    const point = screen.getByRole('button', { name: 'Decimal point' });
+    const keypad = screen.getByRole('button', { name: '7' }).parentElement;
+    // A button inside a wrapper shrinks to the width of its "." (16 px): it has to be a grid item itself.
+    expect(point.parentElement).toBe(keypad);
+    expect(point).toHaveClass('col-span-3');
+    expect(screen.getByRole('button', { name: 'Minus' }).parentElement).toBe(keypad);
+  });
+});
+
 describe('ChallengeStage: order', () => {
   function shownOrder(): string[] {
     return screen.getAllByRole('listitem').map((item) => item.getAttribute('aria-label')?.split('.')[0] ?? '');
@@ -257,6 +269,137 @@ describe('ChallengeStage: sort', () => {
   });
 });
 
+describe('ChallengeStage: sort by touch', () => {
+  /** Makes `document.elementsFromPoint` answer with the box called `name`, as if the pointer were over it. */
+  function pointerOver(name: string): () => void {
+    const zone = screen.getByRole('group', { name });
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: () => [zone] });
+    return () => Reflect.deleteProperty(document, 'elementsFromPoint');
+  }
+  const inWater = (): string[] => within(screen.getByRole('group', { name: 'Water' })).queryAllByRole('button', { pressed: false }).map((b) => b.textContent ?? '');
+
+  it('leaves a swipe that starts on a card to the page: nothing is picked up or moved', () => {
+    vi.useFakeTimers();
+    setup(makeChallenge(SORT));
+    const restore = pointerOver('Water');
+    try {
+      const fish = screen.getByRole('button', { name: /Fish/ });
+      // The finger moves on at once: the browser scrolls the page and cancels the pointer.
+      fireEvent.pointerDown(fish, { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 300 });
+      fireEvent.pointerMove(fish, { pointerId: 1, pointerType: 'touch', clientX: 52, clientY: 260 });
+      act(() => void vi.advanceTimersByTime(500));
+      fireEvent.pointerMove(fish, { pointerId: 1, pointerType: 'touch', clientX: 52, clientY: 200 });
+      fireEvent.pointerUp(fish, { pointerId: 1, pointerType: 'touch', clientX: 52, clientY: 200 });
+      expect(inWater().join(' ')).not.toMatch(/Fish/);
+      expect(within(screen.getByRole('group', { name: 'Cards to sort' })).getByRole('button', { name: /Fish/ })).toBeInTheDocument();
+      // The card leaves vertical panning to the browser.
+      expect(fish.style.touchAction).toBe('pan-y');
+    } finally {
+      restore();
+    }
+  });
+
+  it('picks a card up after a short hold and drops it into the box under the finger', () => {
+    vi.useFakeTimers();
+    setup(makeChallenge(SORT));
+    const restore = pointerOver('Water');
+    try {
+      const fish = screen.getByRole('button', { name: /Fish/ });
+      fireEvent.pointerDown(fish, { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 300 });
+      act(() => void vi.advanceTimersByTime(200));
+      // Once it is picked up, the finger's moves do not scroll the page any more.
+      const move = new Event('touchmove', { bubbles: true, cancelable: true });
+      fish.dispatchEvent(move);
+      expect(move.defaultPrevented).toBe(true);
+      fireEvent.pointerMove(fish, { pointerId: 1, pointerType: 'touch', clientX: 60, clientY: 380 });
+      fireEvent.pointerUp(fish, { pointerId: 1, pointerType: 'touch', clientX: 60, clientY: 380 });
+      expect(inWater().join(' ')).toMatch(/Fish/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not hold the page still under a finger that has not picked anything up', () => {
+    setup(makeChallenge(SORT));
+    const fish = screen.getByRole('button', { name: /Fish/ });
+    const move = new Event('touchmove', { bubbles: true, cancelable: true });
+    fish.dispatchEvent(move);
+    expect(move.defaultPrevented).toBe(false);
+  });
+
+  it('lets a mouse drag a card at once', () => {
+    setup(makeChallenge(SORT));
+    const restore = pointerOver('Water');
+    try {
+      const fish = screen.getByRole('button', { name: /Fish/ });
+      fireEvent.pointerDown(fish, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 50, clientY: 300 });
+      fireEvent.pointerMove(fish, { pointerId: 1, pointerType: 'mouse', clientX: 60, clientY: 380 });
+      fireEvent.pointerUp(fish, { pointerId: 1, pointerType: 'mouse', clientX: 60, clientY: 380 });
+      expect(inWater().join(' ')).toMatch(/Fish/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('ChallengeStage: order by touch', () => {
+  it('has a grip to drag a card by, and leaves the rest of the card to the page', () => {
+    setup(makeChallenge(ORDER));
+    const cards = screen.getAllByRole('listitem');
+    expect(cards).toHaveLength(4);
+    for (const card of cards) {
+      const grip = card.querySelector<HTMLElement>('[data-order-grip]');
+      expect(grip).not.toBeNull();
+      expect(grip?.style.touchAction).toBe('none');
+      // The card itself does not claim the finger: a swipe on it scrolls.
+      expect(card.style.touchAction).toBe('');
+    }
+  });
+});
+
+describe('ChallengeStage: long words', () => {
+  const LONG = 'Pneumonoultramicroscopicsilicovolcano';
+
+  it('gives an option with a long word a card across the phone screen, and lets the word break inside it', () => {
+    setup(makeChallenge({ ...CHOICE, options: [{ id: 'a', label: 'Photosynthesis' }, { id: 'b', label: 'Four' }, { id: 'c', label: LONG }] }));
+    const card = screen.getByRole('button', { name: /Photosynthesis/ });
+    expect(card.parentElement).toHaveClass('grid-cols-1', 'sm:grid-cols-2');
+    expect(card).toHaveClass('min-w-0');
+    expect(within(card).getByText('Photosynthesis')).toHaveClass('max-w-full', 'wrap-anywhere');
+  });
+
+  it('keeps short options in two columns', () => {
+    setup(makeChallenge(CHOICE));
+    expect(screen.getByRole('button', { name: /Four/ }).parentElement).toHaveClass('grid-cols-2');
+  });
+
+  it('does the same for the parts of a build challenge', () => {
+    setup(makeChallenge({ ...BUILD, parts: BUILD.parts.map((part, index) => (index === 0 ? { ...part, label: LONG } : part)) }));
+    const card = screen.getByRole('button', { name: new RegExp(LONG) });
+    expect(card.parentElement).toHaveClass('grid-cols-1', 'sm:grid-cols-2');
+    expect(within(card).getByText(LONG)).toHaveClass('max-w-full', 'wrap-anywhere');
+  });
+});
+
+describe('ChallengeStage: match labels', () => {
+  it('puts the number of a connection on the corner of the card, where it takes no room from the label', async () => {
+    const { user } = setup(makeChallenge(MATCH));
+    await user.click(screen.getByRole('button', { name: /^Dog/ }));
+    await user.click(screen.getByRole('button', { name: /^Puppy/ }));
+    const badges = document.querySelectorAll('[data-match-badge]');
+    expect(badges).toHaveLength(2);
+    for (const badge of badges) expect(badge).toHaveClass('absolute');
+  });
+});
+
+describe('ChallengeStage: Check', () => {
+  it('stays in view at the bottom of the screen while the answer area is on it', () => {
+    const { check } = setup(makeChallenge(ORDER));
+    expect(check().parentElement).toHaveClass('sticky');
+    expect(check().parentElement).toHaveAttribute('data-check-bar');
+  });
+});
+
 describe('ChallengeStage: build', () => {
   it('toggles parts, shows live meters, and submits the selection', async () => {
     const { onSubmit, user, check } = setup(makeChallenge(BUILD));
@@ -328,6 +471,42 @@ describe('ChallengeStage: match', () => {
     await connect('Cat', 'Kitten');
     await user.click(check());
     expect(onSubmit).toHaveBeenLastCalledWith({ p1: 'p1', p2: 'p2', p3: 'p3' }, { correct: true, misconception: null, progress: 1 });
+  });
+});
+
+describe('ChallengeStage: match by touch', () => {
+  it('takes the next tap on a left card after a touch drag, which is followed by no click', () => {
+    setup(makeChallenge(MATCH));
+    const dog = screen.getByRole('button', { name: /^Dog/ });
+    const kitten = screen.getByRole('button', { name: /^Kitten/ });
+    const elementsFromPoint = vi.fn(() => [kitten]);
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: elementsFromPoint });
+    try {
+      // A finger drags from "Dog" to "Kitten". The browser sends no click after a touch drag.
+      fireEvent.pointerDown(dog, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(dog, { pointerId: 1, pointerType: 'touch', clientX: 120, clientY: 40 });
+      fireEvent.pointerUp(dog, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 40 });
+      expect(screen.getByRole('button', { name: 'Dog, matched with Kitten' })).toBeInTheDocument();
+
+      // The very next tap on another left card picks it.
+      const cat = screen.getByRole('button', { name: /^Cat/ });
+      fireEvent.pointerDown(cat, { pointerId: 2, pointerType: 'touch', clientX: 10, clientY: 90 });
+      fireEvent.pointerUp(cat, { pointerId: 2, pointerType: 'touch', clientX: 10, clientY: 90 });
+      fireEvent.click(cat);
+      expect(cat).toHaveAttribute('aria-pressed', 'true');
+    } finally {
+      Reflect.deleteProperty(document, 'elementsFromPoint');
+    }
+  });
+
+  it('still ignores the click that a mouse sends at the end of a drag', () => {
+    setup(makeChallenge(MATCH));
+    const dog = screen.getByRole('button', { name: /^Dog/ });
+    fireEvent.pointerDown(dog, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(dog, { pointerId: 1, pointerType: 'mouse', clientX: 60, clientY: 40 });
+    fireEvent.pointerUp(dog, { pointerId: 1, pointerType: 'mouse', clientX: 12, clientY: 12 });
+    fireEvent.click(dog);
+    expect(dog).toHaveAttribute('aria-pressed', 'false');
   });
 });
 

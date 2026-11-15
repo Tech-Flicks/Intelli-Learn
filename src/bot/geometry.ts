@@ -3,8 +3,9 @@
  *
  * Pip lives in a round bubble that the child can drag anywhere inside the
  * viewport, below the top bar and inside the safe areas. His home ("dock") is
- * the top right corner of the question card: far from the Check button, which
- * is always the last thing on the page.
+ * the top right corner of the question card. When that card has scrolled away
+ * he rests at the bottom right instead, in the room the Check bar keeps for him,
+ * so he never lies over the answer area.
  */
 import type { PipState } from './pip';
 
@@ -56,6 +57,8 @@ export const BOT = {
   /** At home Pip sits this far inside the question card's top right corner. */
   dockInset: 8,
   dockDrop: 6,
+  /** Pip leaves his seat for his place next to Check once the seat has scrolled this far away from him. */
+  restAfter: 24,
   /** A pointer that moved less than this was a tap, not a drag. */
   tapSlop: 8,
   /** Two taps inside this time make Pip giggle. */
@@ -98,6 +101,43 @@ export function clampPoint(point: Point, bounds: Bounds): Point {
 export function dockPoint(bounds: Bounds, size: number, columnRight: number | null): Point {
   const wanted = columnRight === null ? bounds.maxX : columnRight - BOT.dockInset - size;
   return clampPoint({ x: wanted, y: bounds.minY + BOT.dockDrop }, bounds);
+}
+
+/**
+ * Pip's second home, for when the question card has scrolled away: the right end of the Check
+ * bar, in the room the bar keeps free for him (`restInset`). Up at the top he would lie over the
+ * answer area that is scrolling past underneath. `check` is the bar's top edge and height: he is
+ * centred on it, so he stays beside Check also at the end of the page, where the bar leaves the
+ * bottom of the screen.
+ */
+export function restPoint(bounds: Bounds, size: number, columnRight: number | null, check: { top: number; height: number }): Point {
+  const wanted = columnRight === null ? bounds.maxX : columnRight - size;
+  return clampPoint({ x: wanted, y: Math.round(check.top + (check.height - size) / 2) }, bounds);
+}
+
+/** The room at the right end of the Check bar that Pip needs while he rests next to it. */
+export function restInset(size: number): number {
+  return size + BOT.margin;
+}
+
+/**
+ * Whether Pip, at home, should rest next to Check instead of in his seat in the question card.
+ *
+ * `seatTop` is the top edge of the seat the card keeps for him, `dockY` where he sits when the
+ * page is at its top, `checkTop` the top edge of the Check bar; null means "not on the page" (or
+ * not laid out). He moves down once his seat has scrolled away from under him and Check is on the
+ * screen, and comes back when the seat is back. `resting` (where he is now) keeps him from
+ * hopping to and fro at the edge.
+ */
+export function restsLow(
+  input: { seatTop: number | null; dockY: number; checkTop: number | null; viewportHeight: number },
+  resting: boolean,
+): boolean {
+  const { seatTop, dockY, checkTop, viewportHeight } = input;
+  if (seatTop === null || checkTop === null) return false;
+  if (checkTop >= viewportHeight - BOT.margin) return false;
+  const away = dockY - seatTop;
+  return away > (resting ? BOT.restAfter / 2 : BOT.restAfter);
 }
 
 export function isNearDock(point: Point, dock: Point): boolean {

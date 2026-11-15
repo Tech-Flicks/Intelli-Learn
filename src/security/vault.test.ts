@@ -1,7 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, getSettings, wipeEverything } from '@/data';
 import { base64ToBytes } from './encoding';
-import { decryptSecret, DEVICE_KEY_ID, encryptSecret, getApiKey, hasApiKey, setApiKey } from './vault';
+import { updateSettings } from '@/data';
+import {
+  API_KEY_ORIGIN_KEY,
+  decryptSecret,
+  DEVICE_KEY_ID,
+  encryptSecret,
+  getApiKey,
+  getApiKeyFor,
+  getApiKeyOrigin,
+  hasApiKey,
+  keepApiKeyOrigin,
+  serviceOrigin,
+  setApiKey,
+} from './vault';
 
 const SECRET = 'sk-test-ĀЖ🦄-1234567890';
 
@@ -199,5 +212,93 @@ describe('API key', () => {
     expect(await getApiKey()).toBeNull();
     await setApiKey('sk-after-reset');
     expect(await getApiKey()).toBe('sk-after-reset');
+  });
+});
+
+describe('the service an API key belongs to', () => {
+  const OPENAI = 'https://api.openai.com/v1';
+
+  async function saveDirectAddress(baseUrl: string, provider: 'direct' | 'demo' | 'proxy' = 'direct'): Promise<void> {
+    await updateSettings((current) => ({ ...current, ai: { ...current.ai, provider, baseUrl } }));
+  }
+
+  it('reads the origin of an address and nothing from text that is not one', () => {
+    expect(serviceOrigin(' https://api.openai.com/v1/ ')).toBe('https://api.openai.com');
+    expect(serviceOrigin('http://localhost:11434/v1')).toBe('http://localhost:11434');
+    expect(serviceOrigin('api.openai.com')).toBeNull();
+    expect(serviceOrigin('javascript:alert(1)')).toBeNull();
+    expect(serviceOrigin('')).toBeNull();
+  });
+
+  it('hands the key out for the address it was entered for, whatever the path', async () => {
+    await setApiKey(SECRET, OPENAI);
+    expect(await getApiKeyOrigin()).toBe('https://api.openai.com');
+    expect(await getApiKeyFor(OPENAI)).toBe(SECRET);
+    expect(await getApiKeyFor('https://api.openai.com/v2/other/')).toBe(SECRET);
+  });
+
+  it.each([
+    ['another host', 'https://collector.example/v1'],
+    ['a look-alike host', 'https://api.openai.com.collector.example/v1'],
+    ['the same host without TLS', 'http://api.openai.com/v1'],
+    ['the same host on another port', 'https://api.openai.com:8443/v1'],
+    ['a server on the home network', 'http://192.168.1.20:11434/v1'],
+    ['text that is no address', 'api.openai.com'],
+  ])('hands out nothing for %s', async (_what, address) => {
+    await setApiKey(SECRET, OPENAI);
+    expect(await getApiKeyFor(address)).toBeNull();
+    // The key itself is still there for its own service.
+    expect(await getApiKeyFor(OPENAI)).toBe(SECRET);
+  });
+
+  it('does not follow the address in the settings to another service', async () => {
+    await saveDirectAddress(OPENAI);
+    await setApiKey(SECRET, OPENAI);
+    await saveDirectAddress('https://collector.example/v1');
+    expect(await getApiKeyFor('https://collector.example/v1')).toBeNull();
+    expect(await getApiKeyOrigin()).toBe('https://api.openai.com');
+  });
+
+  it('ties a key saved without an address to the Direct address in the settings', async () => {
+    await saveDirectAddress(OPENAI);
+    await setApiKey(SECRET);
+    expect((await db.kv.get(API_KEY_ORIGIN_KEY))?.value).toBeUndefined();
+    expect(await getApiKeyFor(OPENAI)).toBe(SECRET);
+    expect(await getApiKeyFor('https://collector.example/v1')).toBeNull();
+
+    // Written down before the address changes, it stays with that service.
+    await keepApiKeyOrigin();
+    await saveDirectAddress('https://collector.example/v1', 'demo');
+    expect(await getApiKeyFor('https://collector.example/v1')).toBeNull();
+    expect(await getApiKeyFor(OPENAI)).toBe(SECRET);
+  });
+
+  it('knows no service for a key without an address in Proxy mode, and writes nothing down then', async () => {
+    await saveDirectAddress('/ai', 'proxy');
+    await setApiKey(SECRET);
+    expect(await getApiKeyOrigin()).toBeNull();
+    await keepApiKeyOrigin();
+    expect(await db.kv.get(API_KEY_ORIGIN_KEY)).toBeUndefined();
+    expect(await getApiKeyFor(OPENAI)).toBeNull();
+    expect(await hasApiKey()).toBe(true);
+  });
+
+  it('forgets the service with the key, and a new key gets its own', async () => {
+    await setApiKey(SECRET, OPENAI);
+    await setApiKey(null);
+    expect(await db.kv.get(API_KEY_ORIGIN_KEY)).toBeUndefined();
+    expect(await getApiKeyOrigin()).toBeNull();
+
+    await setApiKey('sk-first', OPENAI);
+    await setApiKey('sk-second', 'https://other.example/v1');
+    expect(await getApiKeyFor(OPENAI)).toBeNull();
+    expect(await getApiKeyFor('https://other.example/v1')).toBe('sk-second');
+  });
+
+  it('has no service when the key can no longer be decrypted', async () => {
+    await setApiKey(SECRET, OPENAI);
+    await db.kv.delete(DEVICE_KEY_ID);
+    expect(await getApiKeyOrigin()).toBeNull();
+    expect(await getApiKeyFor(OPENAI)).toBeNull();
   });
 });

@@ -21,7 +21,10 @@ vi.mock('@/data', () => ({
     world.usage.push(delta);
   }),
 }));
-vi.mock('@/security', () => ({ getApiKey: vi.fn(async () => 'sk-test') }));
+vi.mock('@/security', () => ({
+  getApiKeyFor: vi.fn(async () => 'sk-test'),
+  hasApiKey: vi.fn(async () => true),
+}));
 
 import { SAMPLE_CHALLENGES } from '@/engine';
 import { pickOfflineChallenge, pickOfflineStory } from '@/offline';
@@ -31,10 +34,12 @@ import {
   challengeTexts,
   checkChallengeSafety,
   checkTexts,
+  localChallengeSafety,
   localSafetyCheck,
   normalizeForSafety,
   resetModerationSession,
   svgTextContent,
+  svgTextRuns,
 } from './safety';
 
 const fetchMock = vi.fn();
@@ -97,6 +102,29 @@ describe('localSafetyCheck: true positives', () => {
     ['links', 'Check out coolgames.com today!'],
     ['links', 'Write to me at friend@example.org'],
     ['links', 'Find me on Discord.'],
+    // The pattern, not one phrasing: a question that joins "you/your" with something personal.
+    ['personal', 'Great question! Which city do you live in?'],
+    ['personal', 'What is the name of your school?'],
+    ['personal', "What is your mom's name?"],
+    ['personal', "What are your parents' names?"],
+    ['personal', 'Which street is your house on?'],
+    ['personal', 'What town are you from?'],
+    ['personal', 'Where are you from?'],
+    ['personal', 'How old will you be on your next birthday?'],
+    ['personal', 'When is your birthday?'],
+    ['personal', 'whats ur address'],
+    ['personal', 'where u live'],
+    ['personal', 'how old r u'],
+    ['personal', 'come to the park alone'],
+    ['personal', 'add me on roblox'],
+    ['personal', 'telegram me'],
+    ['personal', 'Message me after school.'],
+    ['links', 'Visit coolgames.io to win'],
+    ['links', 'go to bit.ly/abc'],
+    ['links', 'Watch it on streams.tv tonight'],
+    ['violence', 'I will hurt you'],
+    ['unkind words', 'nobody likes you'],
+    ['self-harm', 'kys'],
     // Spanish
     ['violence', 'El pirata quiere matar al capitán.'],
     ['profanity', 'Esto es una mierda.'],
@@ -105,12 +133,19 @@ describe('localSafetyCheck: true positives', () => {
     ['personal', '¿Dónde vives?'],
     ['personal', 'Dime tu dirección.'],
     ['personal', '¿Cuántos años tienes?'],
+    ['personal', '¿En qué ciudad vives?'],
+    ['personal', '¿Cómo se llama tu escuela?'],
+    ['personal', '¿Cómo se llama tu mamá?'],
+    ['personal', '¿Cuándo es tu cumpleaños?'],
     // Hindi
     ['weapons', 'उसके पास बंदूक है।'],
     ['drugs or alcohol', 'वह शराब पीता है।'],
     ['personal', 'तुम्हारा नाम क्या है?'],
     ['personal', 'तुम कहाँ रहते हो?'],
     ['personal', 'अपना फ़ोन नंबर बताओ।'],
+    ['personal', 'तुम किस शहर में रहते हो?'],
+    ['personal', 'तुम्हारी मम्मी का नाम क्या है?'],
+    ['personal', 'तुम्हारा जन्मदिन कब है?'],
     ['unkind words', 'तुम बेवकूफ हो।'],
   ];
 
@@ -181,6 +216,25 @@ describe('localSafetyCheck: no false positives', () => {
     'Skeletons have 206 bones in an adult.',
     'A monster truck has huge wheels.',
     'The canal is 3.5 km long. Stop.Come back later.',
+    // Lessons and missions talk about "you" and about places, ages and families without asking for them.
+    'How old is the tree if it has 12 rings?',
+    'You are 8 years old now. How old will you be in 5 years?',
+    'Which city is the capital of France? Which street is longer on the map?',
+    'What is the name of this shape? What is the name of your robot?',
+    'Count the windows of your house. How many steps is it from your room to the kitchen?',
+    'Your mom buys 3 apples and your dad buys 4. How many apples are there?',
+    'Look at the weather where you live. Animals that live near your school need water.',
+    'Where does the river start? Where is the robot from?',
+    'Think about what your town looks like from above, and what your school needs.',
+    'The robot must cross the maze alone. Can you solve this one alone?',
+    'A telegram was a message sent over wires. Add the numbers on the cards.',
+    'You can call me Pip! I will find you a clue. I will get you started.',
+    'The ball will hit the wall. Nobody likes a soggy sandwich.',
+    'The moon is bright.Then it sets.It is far away.',
+    'Robots use sensors.AI helps them. Measure 2.5 cm and 1.5/3 of a cup.',
+    'Walk 5 kms and write the answer, e.g. 12.',
+    'La luna.Es grande. ¿En qué ciudad vive el oso? ¿Cómo se llama tu robot?',
+    'शेर किस जंगल में रहता है? रोबोट का नाम क्या है?',
     // Spanish
     'El año tiene doce meses.',
     'El cono tiene una base redonda.',
@@ -328,6 +382,15 @@ describe('challengeTexts', () => {
   it('reads svg text without tags', () => {
     expect(svgTextContent('<svg><!-- note --><g><text x="1">Hi &amp; there</text></g></svg>')).toBe('Hi there');
   });
+
+  it('also reads each svg text element the way it is drawn, in one piece', () => {
+    const svg = '<svg><title>A title</title><text x="1"><tspan>Hel</tspan><tspan>lo</tspan> w&#111;rld</text><text>2 &lt; 5</text><textPath>not a text element</textPath></svg>';
+    expect(svgTextRuns(svg)).toEqual(['Hello world', '2 < 5']);
+    expect(svgTextContent(svg)).toContain('Hel lo');
+    const c = challenge({ scene: { theme: 'space', objects: [{ id: 's', type: 'svg', svg, x: 5, y: 5 }] } });
+    expect(challengeTexts(c)).toEqual(expect.arrayContaining(['Hello world', '2 < 5']));
+    expect(svgTextRuns('<svg><rect width="5" height="5"/></svg>')).toEqual([]);
+  });
 });
 
 describe('checkChallengeSafety', () => {
@@ -342,6 +405,32 @@ describe('checkChallengeSafety', () => {
 
     const inEmoji = challenge({ scene: { theme: 'space', objects: [{ id: 'g', type: 'emoji', emoji: '🔫', x: 5, y: 5 }] } });
     expect((await checkChallengeSafety(inEmoji, 'standard')).safe).toBe(false);
+  });
+
+  it.each([
+    ['split over tspans', "<svg viewBox='0 0 100 100'><text x='5' y='20'><tspan>s</tspan><tspan>ex</tspan></text></svg>"],
+    ['with a tspan in the middle', '<svg viewBox="0 0 100 100"><text>s<tspan fill="red">e</tspan>x</text></svg>'],
+    ['with a letter written as a character reference', '<svg viewBox="0 0 100 100"><text>s&#101;x</text></svg>'],
+    ['with a hex character reference', '<svg viewBox="0 0 100 100"><text>s&#x65;x</text></svg>'],
+    ['inside CDATA', '<svg viewBox="0 0 100 100"><text><![CDATA[sex]]></text></svg>'],
+    ['split by a comment', '<svg viewBox="0 0 100 100"><text>s<!-- x -->ex</text></svg>'],
+    ['on a text path', '<svg viewBox="0 0 100 100"><path id="p" d="M0 0h90"/><text><textPath href="#p">s<tspan>ex</tspan></textPath></text></svg>'],
+  ])('rejects a blocked word drawn in one piece in an svg, %s', async (_how, svg) => {
+    const drawn = challenge({ scene: { theme: 'space', objects: [{ id: 's', type: 'svg', svg, x: 5, y: 5 }] } });
+    expect((await checkChallengeSafety(drawn, 'strict')).safe).toBe(false);
+    expect(localChallengeSafety(drawn, 'standard').safe).toBe(false);
+  });
+
+  it('still accepts harmless svg text, also over several tspans and lines', async () => {
+    for (const svg of [
+      '<svg viewBox="0 0 100 100"><text x="5" y="20"><tspan>3</tspan><tspan> cm</tspan></text></svg>',
+      '<svg viewBox="0 0 100 100"><text x="5" y="20">Glass</text><text x="5" y="40">Exam</text></svg>',
+      '<svg viewBox="0 0 100 100"><text x="5" y="20"><tspan x="5" dy="0">The class</tspan> <tspan x="5" dy="12">explores</tspan></text></svg>',
+      '<svg viewBox="0 0 100 100"><text>2 &lt; 5 &amp; 5 &gt; 2</text></svg>',
+    ]) {
+      const drawn = challenge({ scene: { theme: 'space', objects: [{ id: 's', type: 'svg', svg, x: 5, y: 5 }] } });
+      expect((await checkChallengeSafety(drawn, 'strict')).safe, svg).toBe(true);
+    }
   });
 
   it('does not call the network in demo mode', async () => {

@@ -18,7 +18,18 @@ export {
 } from './password';
 export type { VerifyResult } from './password';
 
-export { encryptSecret, decryptSecret, setApiKey, getApiKey, hasApiKey } from './vault';
+export {
+  encryptSecret,
+  decryptSecret,
+  setApiKey,
+  getApiKey,
+  hasApiKey,
+  getApiKeyFor,
+  getApiKeyOrigin,
+  keepApiKeyOrigin,
+  serviceOrigin,
+  API_KEY_ORIGIN_KEY,
+} from './vault';
 
 export { useParentGate, PARENT_IDLE_LOCK_MS, PARENT_HIDDEN_LOCK_MS } from './gate';
 export type { ParentGateState } from './gate';

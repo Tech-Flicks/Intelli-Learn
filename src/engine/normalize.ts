@@ -5,7 +5,7 @@
  */
 import { MAX_SCENE_OBJECTS, SHAPES } from '@/core/schemas';
 import type { Challenge, Interaction, RobotInteraction, Scene, SceneAnim, SceneObject } from '@/core/schemas';
-import { cellKey } from './robot';
+import { cellKey, robotFitsBudget } from './robot';
 import { sanitizeSvg } from './svg';
 
 /** Stand-in for a tap target whose own drawing had to be dropped. */
@@ -181,7 +181,32 @@ function normalizeRobot(i: RobotInteraction): RobotInteraction {
     seenGems.add(key);
     return true;
   });
-  return { ...i, walls, gems, allowed: [...new Set(i.allowed)] };
+  const out: RobotInteraction = { ...i, walls, gems, allowed: [...new Set(i.allowed)] };
+  return { ...out, maxCommands: roomyEnough(out) };
+}
+
+/** The schema's upper limit for `maxCommands`. */
+const MAX_ROBOT_COMMANDS = 24;
+/** Blocks to spare above the shortest solution when the limit has to be raised. */
+const ROBOT_SPARE_BLOCKS = 2;
+
+/**
+ * `maxCommands` raised when the shortest solution does not fit in it. Counting the blocks of a
+ * path is exactly what an author gets wrong, and the repair is safe: any program within the
+ * limit that reaches the goal is correct, so a higher limit only gives the child more room.
+ * A maze that cannot be solved, or needs more blocks than the limit can ever be, is left as it
+ * is for the validator to report.
+ */
+function roomyEnough(i: RobotInteraction): number {
+  try {
+    const report = robotFitsBudget(i);
+    if (report.solvable && !report.fits && report.blocks <= MAX_ROBOT_COMMANDS) {
+      return Math.min(MAX_ROBOT_COMMANDS, report.blocks + ROBOT_SPARE_BLOCKS);
+    }
+  } catch {
+    // a maze that cannot be searched is the validator's business
+  }
+  return i.maxCommands;
 }
 
 function normalizeInteraction(i: Interaction): Interaction {
@@ -212,7 +237,8 @@ function normalizeInteraction(i: Interaction): Interaction {
  * Safe fix-ups: unique scene object ids, tap targets marked tappable (with
  * distractors where the scene offers any), positions and sizes clamped,
  * unsafe svg dropped, scene trimmed to the object limit, keypad able to type
- * the answer, robot walls cleaned up. Returns a new object.
+ * the answer, robot walls cleaned up and the robot's block limit raised when
+ * the shortest solution does not fit in it. Returns a new object.
  */
 export function normalizeChallenge(c: Challenge): Challenge {
   const copy = deepCopy(c);

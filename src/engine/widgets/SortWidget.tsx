@@ -11,7 +11,8 @@ type Item = SortInteraction['items'][number];
 /**
  * Item cards and bin drop zones. Three ways to sort, all equal:
  * drag a card onto a box, tap a card then tap a box, or use the keyboard
- * (cards and boxes are buttons).
+ * (cards and boxes are buttons). Under a finger a card is picked up after a
+ * short hold, so a swipe that starts on a card scrolls the page.
  */
 export function SortWidget({ interaction, value, onChange, disabled, highlight, labels }: WidgetProps<SortInteraction, Record<string, string>>): JSX.Element {
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -50,11 +51,12 @@ export function SortWidget({ interaction, value, onChange, disabled, highlight, 
           if (consumeClick() || disabled) return;
           setPickedId(isPicked ? null : item.id);
         }}
-        style={dragging ? { x: drag.dx, y: drag.dy, zIndex: 30, touchAction: 'none' } : { touchAction: 'none' }}
+        // A swipe that starts on a card scrolls the page; a finger that rests on it picks it up (see `useDragToZone`).
+        style={dragging ? { x: drag.dx, y: drag.dy, zIndex: 30, touchAction: 'pan-y' } : { touchAction: 'pan-y' }}
         className={cx(
-          'relative flex min-h-14 cursor-grab items-center rounded-2xl border-4 bg-white px-3 py-2 text-lg font-bold text-ink-900 shadow-sm active:cursor-grabbing',
+          'relative flex min-h-14 max-w-full cursor-grab select-none items-center rounded-2xl border-4 bg-white px-3 py-2 text-lg font-bold text-ink-900 shadow-sm [-webkit-touch-callout:none] active:cursor-grabbing',
           isPicked ? 'border-brand-500 bg-brand-100' : 'border-sun-300',
-          dragging && 'shadow-xl',
+          dragging && 'shadow-xl ring-4 ring-brand-300',
           highlight.has(item.id) && HINT_GLOW,
           FOCUS_RING,
         )}

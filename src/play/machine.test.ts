@@ -12,6 +12,7 @@ import {
   frameOf,
   freshRun,
   helpToOffer,
+  isRepeatedSubmit,
   highlightsFor,
   hintLevelOf,
   isSolved,
@@ -66,6 +67,33 @@ describe('tracking the outcome', () => {
   it('takes no more answers once the challenge is solved', () => {
     const solved = after(hit);
     expect(withAnswer(solved, wrong(9))).toBe(solved);
+  });
+});
+
+describe('a double tap on Check', () => {
+  it('is the same try when the same wrong answer comes again within a moment', () => {
+    const run = withAnswer(freshRun(), wrong(1000));
+    expect(isRepeatedSubmit(run, ['a'], 1000 + PLAY.doubleSubmitMs - 1)).toBe(true);
+    expect(isRepeatedSubmit(run, ['a'], 1000)).toBe(true);
+  });
+
+  it('is a new try after the moment has passed, with another answer, or on a fresh run', () => {
+    const run = withAnswer(freshRun(), wrong(1000));
+    expect(isRepeatedSubmit(run, ['a'], 1000 + PLAY.doubleSubmitMs)).toBe(false);
+    expect(isRepeatedSubmit(run, ['c'], 1100)).toBe(false);
+    expect(isRepeatedSubmit(run, ['a', 'c'], 1100)).toBe(false);
+    expect(isRepeatedSubmit(freshRun(), ['a'], 1100)).toBe(false);
+    // A clock that jumped back is no reason to drop an answer.
+    expect(isRepeatedSubmit(run, ['a'], 900)).toBe(false);
+  });
+
+  it('compares what was answered, whatever the kind', () => {
+    const number = withAnswer(freshRun(), answerEvent(7, { correct: false, misconception: null, progress: 0 }, 1000));
+    expect(isRepeatedSubmit(number, 7, 1200)).toBe(true);
+    expect(isRepeatedSubmit(number, 8, 1200)).toBe(false);
+    const sorted = withAnswer(freshRun(), answerEvent({ fish: 'land', cow: 'land' }, { correct: false, misconception: null, progress: 0.5 }, 1000));
+    expect(isRepeatedSubmit(sorted, { cow: 'land', fish: 'land' }, 1200)).toBe(true);
+    expect(isRepeatedSubmit(sorted, { cow: 'land', fish: 'water' }, 1200)).toBe(false);
   });
 });
 
@@ -163,6 +191,14 @@ describe('framing', () => {
     expect(parseRequest(new URLSearchParams('mode=studio&idea=  a   dragon  '))).toEqual({ mode: 'studio', idea: 'a dragon' });
     expect(parseRequest(new URLSearchParams('mode=quest&idea=a dragon'))).toEqual({ mode: 'quest' });
     expect(parseRequest(new URLSearchParams(`mode=studio&idea=${'x'.repeat(200)}`)).idea).toHaveLength(80);
+  });
+
+  it('reads the picture idea of the studio as three chip ids, never as text', () => {
+    expect(parseRequest(new URLSearchParams('mode=studio&pick=dragon.baking.moon'))).toEqual({ mode: 'studio', pick: 'dragon.baking.moon' });
+    expect(parseRequest(new URLSearchParams('mode=quest&pick=dragon.baking.moon'))).toEqual({ mode: 'quest' });
+    for (const pick of ['dragon.baking', 'my name is Sam.lives.here', 'Dragon.Baking.Moon', 'a.b.c.d', 'dragon..moon', `${'x'.repeat(40)}.b.c`]) {
+      expect(parseRequest(new URLSearchParams({ mode: 'studio', pick })), pick).toEqual({ mode: 'studio' });
+    }
   });
 });
 

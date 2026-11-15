@@ -1,5 +1,5 @@
 /** Small pieces shared by the interaction widgets. */
-import { useCallback, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
 
 /** Joins class names, skipping empty values. */
 export function cx(...parts: (string | false | null | undefined)[]): string {
@@ -162,6 +162,51 @@ export function EmojiLabel({ emoji, label, stacked = false }: { emoji?: string |
 
 const DRAG_THRESHOLD = 8;
 
+/**
+ * A finger has to rest on a card for this long before it picks the card up. A finger that moves on
+ * sooner is swiping, and the page scrolls: on a phone the cards fill most of the screen, and a
+ * child must be able to scroll past them without changing the answer. A mouse picks up at once.
+ */
+export const TOUCH_HOLD_MS = 140;
+
+/** A long word in a label this long (or longer) gets a card across the whole width on a phone. */
+export const LONG_WORD = 11;
+
+/** True when a label holds a word that does not fit into one of two columns on a phone. */
+export function hasLongWord(labels: readonly string[]): boolean {
+  return labels.some((label) => label.split(/[\s\-/]+/u).some((word) => Array.from(word).length >= LONG_WORD));
+}
+
+/**
+ * Keeps the page still under a card that a finger is dragging.
+ *
+ * Cards that can be dragged leave vertical panning to the browser (`touch-action: pan-y`), so a
+ * swipe that starts on one scrolls the page. Once a card is picked up (`locked()` is true), the
+ * moves of the finger belong to the card: they are cancelled before the browser pans. The
+ * listener has to sit on the element before the touch starts and must not be passive, or the
+ * browser does not let it cancel anything. Returns a ref callback per card.
+ */
+export function useTouchScrollLock(locked: () => boolean): (key: string) => (el: HTMLElement | null) => void {
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
+  const refs = useRef(new Map<string, (el: HTMLElement | null) => void>());
+  return useCallback((key: string) => {
+    const known = refs.current.get(key);
+    if (known) return known;
+    let current: HTMLElement | null = null;
+    const onTouchMove = (event: TouchEvent): void => {
+      if (lockedRef.current() && event.cancelable) event.preventDefault();
+    };
+    const ref = (el: HTMLElement | null): void => {
+      current?.removeEventListener('touchmove', onTouchMove);
+      current = el;
+      el?.addEventListener('touchmove', onTouchMove, { passive: false });
+    };
+    refs.current.set(key, ref);
+    return ref;
+  }, []);
+}
+
 export interface DragState {
   id: string;
   dx: number;
@@ -181,24 +226,62 @@ export function zoneAtPoint(x: number, y: number, ignore: Element | null): strin
   return null;
 }
 
+interface DragStart {
+  id: string;
+  x: number;
+  y: number;
+  pointerId: number;
+  moved: boolean;
+  touch: boolean;
+  /** The card is picked up: at once with a mouse, after `TOUCH_HOLD_MS` under a finger. */
+  held: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 /**
  * Pointer dragging for cards that can be dropped on `[data-dropzone]` elements.
  *
  * A press that moves less than a few pixels is left alone so the element's
  * ordinary click (tap-to-pick, also what Enter and Space trigger) still fires.
  * After a real drag the following click is swallowed.
+ *
+ * Under a finger a card is picked up after a short hold (`TOUCH_HOLD_MS`); a
+ * swipe that starts on a card scrolls the page and moves nothing. Give the card
+ * `touch-action: pan-y` and spread `handlersFor(id)` on it (it carries a `ref`).
  */
 export function useDragToZone(onDrop: (id: string, zone: string | null) => void, disabled = false) {
   const [drag, setDrag] = useState<DragState | null>(null);
-  const start = useRef<{ id: string; x: number; y: number; pointerId: number; moved: boolean } | null>(null);
+  const start = useRef<DragStart | null>(null);
   const swallowClick = useRef(false);
+  const lockFor = useTouchScrollLock(() => start.current !== null && start.current.touch && start.current.held);
+
+  const release = useCallback((): DragStart | null => {
+    const s = start.current;
+    if (s?.timer != null) clearTimeout(s.timer);
+    start.current = null;
+    return s;
+  }, []);
+  useEffect(() => () => void release(), [release]);
 
   const handlersFor = useCallback(
     (id: string) => ({
+      ref: lockFor(id),
       onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
         if (disabled || (event.pointerType === 'mouse' && event.button !== 0)) return;
-        start.current = { id, x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false };
+        release();
+        const touch = event.pointerType === 'touch';
+        const s: DragStart = { id, x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false, touch, held: !touch, timer: null };
+        start.current = s;
         swallowClick.current = false;
+        if (touch) {
+          s.timer = setTimeout(() => {
+            s.timer = null;
+            if (start.current !== s) return;
+            s.held = true;
+            // Lifted: the child sees that the card is theirs to move now.
+            setDrag({ id, dx: 0, dy: 0, over: null });
+          }, TOUCH_HOLD_MS);
+        }
         try {
           event.currentTarget.setPointerCapture?.(event.pointerId);
         } catch {
@@ -210,27 +293,36 @@ export function useDragToZone(onDrop: (id: string, zone: string | null) => void,
         if (!s || s.id !== id || s.pointerId !== event.pointerId) return;
         const dx = event.clientX - s.x;
         const dy = event.clientY - s.y;
-        if (!s.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        const far = Math.hypot(dx, dy) >= DRAG_THRESHOLD;
+        if (!s.held) {
+          // The finger moved on before the card was picked up: a swipe. The page scrolls, the card stays.
+          if (far) release();
+          return;
+        }
+        if (!s.moved && !far) return;
         s.moved = true;
         setDrag({ id, dx, dy, over: zoneAtPoint(event.clientX, event.clientY, event.currentTarget) });
       },
       onPointerUp: (event: ReactPointerEvent<HTMLElement>) => {
         const s = start.current;
-        start.current = null;
         if (!s || s.id !== id) return;
+        release();
         if (s.moved) {
           swallowClick.current = true;
           const zone = zoneAtPoint(event.clientX, event.clientY, event.currentTarget);
           setDrag(null);
           onDrop(id, zone);
+        } else if (s.touch && s.held) {
+          // Picked up and put down in place: the click that follows is an ordinary tap.
+          setDrag(null);
         }
       },
       onPointerCancel: () => {
-        start.current = null;
+        release();
         setDrag(null);
       },
     }),
-    [disabled, onDrop],
+    [disabled, lockFor, onDrop, release],
   );
 
   /** Call first in the card's onClick; true means "this click ended a drag, ignore it". */

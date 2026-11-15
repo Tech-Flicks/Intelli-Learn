@@ -18,6 +18,10 @@ services:
     restart: unless-stopped
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    expose:
+      # For Caddy only (profile "https"). Never publish it: on this port nginx believes
+      # the X-Forwarded-For it is given (see docker/nginx.conf).
+      - "8081"
     read_only: true
     tmpfs:
       # nginx pid file and temporary files (the only paths it writes to)
@@ -44,7 +48,9 @@ services:
       ALLOWED_MODELS: ${ALLOWED_MODELS:-}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      # Reverse proxies in front of ai-proxy that append X-Forwarded-For: nginx (1), or Caddy + nginx (2).
+      # Reverse proxies in front of ai-proxy whose X-Forwarded-For entry is believed. Always 1:
+      # nginx in the web container works out the device address (also behind Caddy) and sends
+      # that one value. A higher number would believe an entry the client can write itself.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
     expose:
       - "8788"

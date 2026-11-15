@@ -46,7 +46,7 @@ describe('placement estimates', () => {
   });
 
   it.each([
-    ['independent', 3],
+    ['independent', 4],
     ['second-try', 1],
     ['nudge', 0],
     ['hint', -1],
@@ -64,7 +64,7 @@ describe('placement estimates', () => {
     state = applyPlacementAttempt(state, '3', note('math-place-value'), 'independent');
     state = applyPlacementAttempt(state, '3', note('math-geometry-shapes'), 'independent');
     state = applyPlacementAttempt(state, '3', note('science-matter', 'science'), 'walkthrough');
-    expect(state.estimates).toEqual({ math: 19, science: 10 });
+    expect(state.estimates).toEqual({ math: 21, science: 10 });
     expect(state.start).toEqual({ math: 13, science: 13 });
     expect(estimateFor(state, '3', 'logic')).toBe(13);
   });
@@ -75,6 +75,50 @@ describe('placement estimates', () => {
     let high = freshPlacement();
     for (let i = 0; i < 4; i += 1) high = applyPlacementAttempt(high, '8', note('math-algebra-ratios'), 'independent');
     expect(high.estimates.math).toBe(39);
+  });
+
+  it('can place a child who solves alone above the enrolled grade', () => {
+    let state = freshPlacement();
+    state = applyPlacementAttempt(state, '3', note('math-place-value'), 'independent');
+    state = applyPlacementAttempt(state, '3', note('math-geometry-shapes'), 'independent');
+    expect(state.estimates.math).toBeGreaterThan(makeStage('3', 'ready'));
+  });
+
+  it('moves an estimate at most two grades from where it started, however many items a strand gets', () => {
+    let up = freshPlacement();
+    let down = freshPlacement();
+    for (let i = 0; i < 8; i += 1) {
+      up = applyPlacementAttempt(up, '3', note('math-geometry-shapes'), 'independent');
+      down = applyPlacementAttempt(down, '5', note('math-geometry-shapes'), 'walkthrough');
+    }
+    expect(up.estimates.math).toBe(13 + TUNING.placement.maxMove);
+    expect(down.estimates.math).toBe(21 - TUNING.placement.maxMove);
+  });
+
+  it('learns nothing about a higher level from an item that had to be pitched far below the estimate', () => {
+    let state = freshPlacement();
+    state = applyPlacementAttempt(state, '5', note('math-geometry-shapes'), 'independent');
+    expect(state.estimates.math).toBe(25);
+    // Counting ends at grade 2: the item was a grade 2 item, and solving it says nothing about grade 5.
+    const counting = { ...note('math-counting-cardinality'), stage: makeStage('2', 'ready') };
+    expect(applyPlacementAttempt(state, '5', counting, 'independent').estimates.math).toBe(25);
+    // Needing help on it does say something.
+    expect(applyPlacementAttempt(state, '5', counting, 'walkthrough').estimates.math).toBe(22);
+  });
+
+  it('learns nothing about a lower level from an item that had to be pitched far above the estimate', () => {
+    const state = applyPlacementAttempt(freshPlacement(), '1', note('math-geometry-shapes'), 'walkthrough');
+    expect(state.estimates.math).toBe(2);
+    // Multiplication starts at grade 2.
+    const multiplication = { ...note('math-multiplication-division'), stage: makeStage('2', 'starting') };
+    expect(applyPlacementAttempt(state, '1', multiplication, 'walkthrough').estimates.math).toBe(2);
+    expect(applyPlacementAttempt(state, '1', multiplication, 'independent').estimates.math).toBe(6);
+  });
+
+  it('counts an item that was planned one answer earlier, a step away from the estimate', () => {
+    const state = applyPlacementAttempt(freshPlacement(), '3', note('math-geometry-shapes'), 'independent');
+    const planned = { ...note('math-place-value'), stage: 13 };
+    expect(applyPlacementAttempt(state, '3', planned, 'independent').estimates.math).toBe(21);
   });
 
   it('does not mutate the state it is given', () => {
@@ -123,7 +167,7 @@ describe('seeding skill states', () => {
       id: 'c1:math-place-value',
       childId: 'c1',
       strand: 'math',
-      stage: 19,
+      stage: 21,
       mastery: TUNING.placement.seedMastery,
       attempts: 1,
       checkPending: false,
@@ -163,6 +207,10 @@ describe('stored placement state', () => {
     expect(parsePlacement({ ...state, estimates: { cooking: 3 } })).toBeNull();
     expect(parsePlacement({ ...state, answered: -1 })).toBeNull();
     expect(parsePlacement({ ...state, attempted: [{ skillId: 1 }] })).toBeNull();
+    // The stage an item was asked at is kept with it; a record from before that was stored is still read.
+    const staged = applyPlacementAttempt(freshPlacement(), '3', { ...note('math-place-value'), stage: 13 }, 'independent');
+    expect(parsePlacement(structuredClone(staged))).toEqual(staged);
+    expect(parsePlacement({ ...staged, attempted: [{ ...note('math-place-value'), stage: 99 }] })).toBeNull();
   });
 
   it('starts over when nothing is stored or a finished placement is run again', () => {

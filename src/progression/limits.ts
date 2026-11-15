@@ -121,19 +121,35 @@ export async function startSession(childId: string, now: number = Date.now()): P
  * `TUNING.limits.maxTickMs`, so a tab that slept for an hour adds a minute.
  * Time played after midnight is counted on the new day, in a continuation
  * record, so each day's limit sees only that day's minutes.
+ *
+ * Play time must not depend on which record happens to be open. When the session was
+ * ended by a newer one (the play screen was opened in a second tab, which ended this
+ * one in `startSession`), the time goes to the child's open session instead. Returns
+ * false when nothing was counted (no such session, or no open session left for the
+ * child): the caller then opens a new session and counts there.
  */
-export async function tickSession(sessionId: string, activeMsDelta: number, now: number = Date.now()): Promise<void> {
-  if (!Number.isFinite(activeMsDelta) || activeMsDelta <= 0) return;
+export async function tickSession(sessionId: string, activeMsDelta: number, now: number = Date.now()): Promise<boolean> {
+  if (!Number.isFinite(activeMsDelta) || activeMsDelta <= 0) return false;
   const delta = Math.min(activeMsDelta, TUNING.limits.maxTickMs);
-  await db.transaction('rw', db.sessions, async () => {
-    const session = await db.sessions.get(sessionId);
-    if (!session || session.endedAt !== null) return;
+  return db.transaction('rw', db.sessions, async () => {
+    let session = await db.sessions.get(sessionId);
+    if (!session) return false;
+    if (session.endedAt !== null) {
+      // Ended, but the child is still playing: count in the session that took over.
+      const open = await db.sessions
+        .where('childId')
+        .equals(session.childId)
+        .filter((row) => row.endedAt === null && !row.id.includes('~'))
+        .toArray();
+      session = open.sort((a, b) => b.startedAt - a.startedAt)[0];
+      if (!session) return false;
+    }
     const today = dayKey(now);
     if (session.day === today) {
-      await db.sessions.update(sessionId, { activeMs: session.activeMs + delta });
-      return;
+      await db.sessions.update(session.id, { activeMs: session.activeMs + delta });
+      return true;
     }
-    const id = continuationId(sessionId, today);
+    const id = continuationId(session.id, today);
     const continuation = await db.sessions.get(id);
     if (continuation) {
       await db.sessions.update(id, { activeMs: continuation.activeMs + delta });
@@ -148,6 +164,7 @@ export async function tickSession(sessionId: string, activeMsDelta: number, now:
         itemsCompleted: 0,
       });
     }
+    return true;
   });
 }
 

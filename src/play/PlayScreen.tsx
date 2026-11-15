@@ -9,7 +9,7 @@
  * control: a challenge is left by solving it, or by going home, which keeps
  * it for next time.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'motion/react';
@@ -209,7 +209,7 @@ function PromptCard({ record, small }: { record: ChallengeRecord; small: boolean
       className={cx('relative flow-root min-h-[88px] rounded-[1.75rem] border-4 p-4 shadow-card sm:min-h-[108px] sm:p-5', FRAME_CLASS[frame])}
     >
       {/* Pip's seat: the first lines flow around him, the question below gets the full width. */}
-      {docked && <span aria-hidden="true" data-testid="pip-seat" className="float-right h-[62px] w-[68px] sm:h-[78px] sm:w-[84px]" />}
+      {docked && <span aria-hidden="true" data-bot-seat="" data-testid="pip-seat" className="float-right h-[62px] w-[68px] sm:h-[78px] sm:w-[84px]" />}
       {frame === 'check' && (
         <p className="mb-1.5 font-display text-lg font-bold leading-tight text-ink-900 sm:text-xl">
           <span aria-hidden="true" className="mr-1.5 inline-block animate-twinkle text-2xl">
@@ -293,7 +293,7 @@ function StoryCard({ story }: { story: StoryView }) {
       className="flex flex-col gap-4 rounded-[1.75rem] border-4 border-brand-200 bg-white p-4 shadow-card sm:p-6"
     >
       <div className="flow-root min-h-[62px] sm:min-h-[74px]">
-        {docked && <span aria-hidden="true" className="float-right h-[62px] w-[68px] sm:h-[74px] sm:w-[80px]" />}
+        {docked && <span aria-hidden="true" data-bot-seat="" className="float-right h-[62px] w-[68px] sm:h-[74px] sm:w-[80px]" />}
         <p>
           <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-0.5 text-sm font-bold text-brand-700 ring-1 ring-brand-200">
             <span aria-hidden="true">📖</span>
@@ -342,6 +342,7 @@ export function PlayScreen(): JSX.Element {
   const panelOpen = usePlaySession((s) => s.panelOpen);
   const breakOpen = usePlaySession((s) => s.breakOpen);
   const walkthroughOpen = usePlaySession((s) => s.walkthroughOpen);
+  const botInset = usePlaySession((s) => s.botInset);
   const submitAnswer = usePlaySession((s) => s.submitAnswer);
 
   const child = useLiveQuery(() => db.children.get(childId), [childId]);
@@ -420,6 +421,8 @@ export function PlayScreen(): JSX.Element {
       <main ref={scrollRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-safe pt-2 pb-safe">
         <div
           data-bot-dock=""
+          // While Pip rests next to Check (the question card has scrolled away), the Check bar leaves him room.
+          style={{ '--stage-check-inset': `${botInset}px` } as CSSProperties}
           className={cx(
             'mx-auto flex w-full max-w-[34rem] flex-1 flex-col gap-3 lg:landscape:max-w-6xl lg:landscape:pb-28',
             // Room to scroll the picture up while a sheet covers the lower part of the screen.

@@ -15,6 +15,8 @@ import type { Teach } from '../assemble';
 export interface Item {
   label: string;
   emoji?: string;
+  /** The emoji is a row of several pictures ("🔴🔴🔷") that a child counts: it is drawn as one wide card. */
+  wide?: boolean;
 }
 
 interface SetBase {

@@ -1,13 +1,29 @@
 /**
  * The password screen in front of the parent area: tries left, a live countdown while
  * the gate is locked out, and the "forgot password" path, which is a full reset.
+ *
+ * The reset needs no password, so a child must not be able to do it in one sitting:
+ * "Forgot password?" only starts a 24-hour wait (`requestReset` in `@/security`). The
+ * request is shown here and on the profile picker, the right password cancels it, and
+ * only when the wait is over does the typed confirmation delete anything. None of it is
+ * offered while the gate is locked after wrong tries.
  */
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '@/i18n';
-import { getLockoutState, MAX_FAILED_ATTEMPTS, useParentGate } from '@/security';
-import { Button, Field, PasswordInput } from '@/ui';
-import { useNow } from './hooks';
+import {
+  getLockoutState,
+  getResetRequest,
+  MAX_FAILED_ATTEMPTS,
+  requestReset,
+  resetAllowed,
+  resetIsReady,
+  RESET_WAIT_MS,
+  useParentGate,
+  type ResetRequest,
+} from '@/security';
+import { Button, ConfirmDialog, Field, PasswordInput } from '@/ui';
+import { useFormat, useNow } from './hooks';
 import { Note, TypedConfirmDialog } from './parts';
 import { resetDevice } from './reset';
 
@@ -22,6 +38,7 @@ export function countdownText(ms: number): string {
 
 export function PasswordGate() {
   const t = useT();
+  const format = useFormat();
   const navigate = useNavigate();
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -30,9 +47,25 @@ export function PasswordGate() {
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [wiping, setWiping] = useState(false);
+  /** The pending forgotten-password reset: `undefined` while it loads, `null` when there is none. */
+  const [request, setRequest] = useState<ResetRequest | null | undefined>(undefined);
+  const [askOpen, setAskOpen] = useState(false);
+  const [asking, setAsking] = useState(false);
 
-  const now = useNow(250, lockedUntil !== null);
+  const now = useNow(250, lockedUntil !== null || request != null);
   const locked = lockedUntil !== null && now < lockedUntil;
+  const waiting = request != null && !resetIsReady(request, now);
+  const ready = request != null && resetIsReady(request, now);
+
+  useEffect(() => {
+    let alive = true;
+    void getResetRequest().then((found) => {
+      if (alive) setRequest(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // The lockout survives reloads: show it right away, before any attempt.
   useEffect(() => {
@@ -74,9 +107,31 @@ export function PasswordGate() {
     }
   };
 
+  /** Starts the waiting period. Nothing is deleted here. */
+  const ask = async () => {
+    setAsking(true);
+    try {
+      const result = await requestReset();
+      setRequest(result.request);
+      if (!result.ok) setLockedUntil(result.lockedUntil);
+      setAskOpen(false);
+    } finally {
+      setAsking(false);
+    }
+  };
+
   const reset = async () => {
     setWiping(true);
     try {
+      // The rule is checked again where the data is deleted, not only where the button is shown.
+      if (!(await resetAllowed())) {
+        setRequest(await getResetRequest());
+        const state = await getLockoutState();
+        setAttemptsLeft(state.attemptsLeft);
+        setLockedUntil(state.lockedUntil);
+        setResetOpen(false);
+        return;
+      }
       await resetDevice();
       useParentGate.getState().lock();
       navigate('/setup', { replace: true });
@@ -130,18 +185,57 @@ export function PasswordGate() {
           </Button>
         </form>
 
+        {request != null && (
+          <div data-testid="gate-reset-request" className="mt-5">
+            <Note tone={ready ? 'danger' : 'warning'} role="status" emoji="⏳">
+              <p className="font-bold">{t(ready ? 'parent.gate.readyTitle' : 'parent.gate.waitTitle')}</p>
+              <p>
+                {ready
+                  ? t('parent.gate.readyText')
+                  : t('parent.gate.waitText', {
+                      asked: format.dateTime(request.requestedAt),
+                      ready: format.dateTime(request.readyAt),
+                    })}
+              </p>
+              <p>{t('parent.gate.waitCancel')}</p>
+              {ready && (
+                <Button variant="danger" size="sm" className="mt-2" disabled={locked} onClick={() => setResetOpen(true)}>
+                  {t('parent.gate.resetConfirm')}
+                </Button>
+              )}
+            </Note>
+          </div>
+        )}
+
         <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
           <Button variant="ghost" size="sm" onClick={() => navigate('/kids')}>
             {t('parent.gate.backToKids')}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setResetOpen(true)}>
-            {t('parent.gate.forgot')}
-          </Button>
+          {request === null && (
+            <Button variant="ghost" size="sm" disabled={locked} onClick={() => setAskOpen(true)}>
+              {t('parent.gate.forgot')}
+            </Button>
+          )}
         </div>
       </div>
 
+      <ConfirmDialog
+        open={askOpen && !locked && request === null}
+        title={t('parent.gate.askTitle')}
+        message={t('parent.gate.resetMessage')}
+        confirmLabel={t('parent.gate.askConfirm', { hours: RESET_WAIT_MS / 3_600_000 })}
+        busy={asking}
+        onCancel={() => setAskOpen(false)}
+        onConfirm={ask}
+      >
+        <div className="flex flex-col gap-3">
+          <Note tone="info">{t('parent.gate.askWait', { hours: RESET_WAIT_MS / 3_600_000 })}</Note>
+          <Note tone="danger">{t('parent.gate.resetWarning')}</Note>
+        </div>
+      </ConfirmDialog>
+
       <TypedConfirmDialog
-        open={resetOpen}
+        open={resetOpen && ready && !locked && !waiting}
         title={t('parent.gate.resetTitle')}
         message={t('parent.gate.resetMessage')}
         word={RESET_WORD}

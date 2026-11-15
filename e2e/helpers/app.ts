@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, type TestInfo } from '@playwright/test';
 import { childByNickname, patchRow, rows } from './db';
-import type { ChildProfile } from '../../src/core/types';
+import type { ChallengeRecord, ChildProfile } from '../../src/core/types';
 
 export const PARENT_PASSWORD = 'blue-kite-42';
 
@@ -250,4 +250,27 @@ export async function expectNoSkip(page: Page): Promise<void> {
   const texts = await page.getByText(/\bskip/i).allInnerTexts();
   offenders.push(...texts.filter(beyondContent).map((text) => `text: ${text}`));
   expect(offenders).toEqual([]);
+}
+
+/**
+ * A try is never called wrong. Returns every text on screen that says "wrong" or "incorrect"
+ * in words of the app's own (empty when all is well).
+ *
+ * As with `expectNoSkip`, the words of the challenge itself are taken out first: a challenge
+ * may be *about* a mistake ("Which step did Bolt get wrong?" is what Fix the Bot asks, and the
+ * planner is free to open with one). Any other text that says it is returned.
+ */
+export async function calledWrong(page: Page, record: Pick<ChallengeRecord, 'content'>): Promise<string[]> {
+  const says = /\b(wrong|incorrect)\b/i;
+  const squash = (text: string): string => text.replace(/\s+/g, ' ').trim();
+  const own: string[] = [];
+  const collect = (value: unknown): void => {
+    if (typeof value === 'string') own.push(squash(value));
+    else if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === 'object') Object.values(value).forEach(collect);
+  };
+  collect(record.content);
+  const challengeWords = own.filter((text) => says.test(text)).sort((a, b) => b.length - a.length);
+  const texts = (await page.getByText(says).allInnerTexts()).map(squash);
+  return texts.filter((text) => says.test(challengeWords.reduce((rest, words) => rest.split(words).join(' '), text)));
 }

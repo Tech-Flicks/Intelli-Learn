@@ -6,7 +6,7 @@
  * `checkPending`, and only a passed concept check moves it up one step.
  */
 import { clampStage } from '@/core/grades';
-import { clampStageToSkill } from '@/core/skills';
+import { clampStageToSkill, getSkill } from '@/core/skills';
 import type {
   AttemptOutcome,
   InteractionKind,
@@ -56,6 +56,26 @@ export function stepUp(skill: SkillDef | undefined, stage: StageValue): StageVal
 /** One stage step down, never below the skill's lowest stage. */
 export function stepDown(skill: SkillDef | undefined, stage: StageValue): StageValue {
   return Math.min(stage, clampToSkill(skill, stage - 1));
+}
+
+/**
+ * How many steps a passed concept check moves the skill up: one, or more when the check was
+ * solved at the first try at the end of a long run of independent solves (`streak` counts the
+ * check itself). A child placed well below their level gets there in weeks, not in a year.
+ */
+export function stepsForPassedCheck(outcome: AttemptOutcome, streak: number): number {
+  const m = TUNING.mastery;
+  if (outcome !== 'independent') return 1;
+  if (streak >= m.leapStreak) return m.leapSteps;
+  if (streak >= m.accelerateStreak) return m.accelerateSteps;
+  return 1;
+}
+
+/** `steps` stage steps up, staying inside the skill's grades. */
+function stepUpBy(skill: SkillDef | undefined, stage: StageValue, steps: number): StageValue {
+  let to = stage;
+  for (let i = 0; i < steps; i += 1) to = stepUp(skill, to);
+  return to;
 }
 
 export function isTopStage(skill: SkillDef | undefined, stage: StageValue): boolean {
@@ -161,7 +181,7 @@ export function applyAttempt(prev: SkillState, skill: SkillDef | undefined, even
     if (SOLVED_ALONE.includes(event.outcome)) {
       checkPassed = true;
       state.checksPassed = prev.checksPassed + 1;
-      const to = stepUp(skill, prev.stage);
+      const to = stepUpBy(skill, prev.stage, stepsForPassedCheck(event.outcome, state.independentStreak));
       if (to > prev.stage) {
         stageChange = { from: prev.stage, to, reason: 'mastery' };
         state.stage = to;
@@ -207,21 +227,29 @@ export function applyAttempt(prev: SkillState, skill: SkillDef | undefined, even
  * Strand stage: the mean of the stages of the strand's practised skills,
  * weighted by attempts (one skill counts at most `strandWeightCap`), rounded.
  * Null when nothing in the strand has been practised.
+ *
+ * Some skills end before grade 8 (counting ends at grade 2). A skill that is at
+ * its own top stage while another skill of the strand is further on has nothing
+ * left to show, so it does not pull the strand down: it counts at the level of
+ * the other skills then (never below its own).
  */
 export function aggregateStrandStage(
   states: readonly SkillState[],
   strand: Strand,
 ): { stage: StageValue | null; practisedSkills: number } {
-  let weightSum = 0;
-  let stageSum = 0;
-  let practisedSkills = 0;
-  for (const state of states) {
-    if (state.strand !== strand || state.attempts <= 0) continue;
-    const weight = Math.min(state.attempts, TUNING.mastery.strandWeightCap);
-    weightSum += weight;
-    stageSum += state.stage * weight;
-    practisedSkills += 1;
-  }
-  if (weightSum === 0) return { stage: null, practisedSkills: 0 };
-  return { stage: clampStage(stageSum / weightSum), practisedSkills };
+  const practised = states.filter((state) => state.strand === strand && state.attempts > 0);
+  if (practised.length === 0) return { stage: null, practisedSkills: 0 };
+  const highest = Math.max(...practised.map((state) => state.stage));
+  const rows = practised.map((state) => ({
+    stage: state.stage,
+    weight: Math.min(state.attempts, TUNING.mastery.strandWeightCap),
+    leftBehind: state.stage < highest && isTopStage(getSkill(state.skillId), state.stage),
+  }));
+
+  const mean = (list: readonly { stage: number; weight: number }[]): number =>
+    list.reduce((sum, row) => sum + row.stage * row.weight, 0) / list.reduce((sum, row) => sum + row.weight, 0);
+  // The skill at the highest stage is never left behind, so this list is not empty.
+  const level = mean(rows.filter((row) => !row.leftBehind));
+  const counted = rows.map((row) => (row.leftBehind ? { stage: Math.max(row.stage, level), weight: row.weight } : row));
+  return { stage: clampStage(mean(counted)), practisedSkills: rows.length };
 }

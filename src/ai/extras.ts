@@ -16,8 +16,9 @@ import { getSettings } from '@/data';
 import { pickOfflineStory } from '@/offline';
 import { chatJson, postJson, type ChatMessage } from './client';
 import { loadAiConfig } from './config';
+import { noteAiFailure } from './diagnostics';
 import { buildImagePrompt, buildNotesPrompt, buildReportPrompt, buildStoryPrompt, clampChapters, percent, type Prompt } from './prompts';
-import { checkTexts, localSafetyCheck } from './safety';
+import { checkTexts, localSafetyCheck, moderateTexts } from './safety';
 import type { LearnerNotesRequest, StoryOutlineRequest, WeeklyReportRequest } from './types';
 
 function asMessages(prompt: Prompt): ChatMessage[] {
@@ -55,18 +56,25 @@ function fitChapters(story: StoryOutline, wanted: number): StoryOutline {
 /** A story outline for Story Quest. Never throws; uses a built-in story when the AI is unavailable or its story is unsuitable. */
 export async function generateStoryOutline(req: StoryOutlineRequest): Promise<StoryOutline> {
   const wanted = clampChapters(req.chapters);
+  const started = Date.now();
+  let model = '';
   try {
     const loaded = await loadAiConfig();
+    if (loaded.ok) model = loaded.config.chatModel;
     if (loaded.ok && !req.signal?.aborted && localSafetyCheck(req.theme, req.child.strictness).safe) {
       const story = await chatJson(asMessages(buildStoryPrompt(req)), StoryOutlineSchema, {
         signal: req.signal,
         config: loaded.config,
         maxTokens: 1800,
       });
-      if (checkTexts(storyTexts(story), req.child.strictness).safe) return fitChapters(story, wanted);
+      const texts = storyTexts(story);
+      if (checkTexts(texts, req.child.strictness).safe && (await moderateTexts(texts, req.child.strictness)).safe) {
+        return fitChapters(story, wanted);
+      }
     }
-  } catch {
-    // fall through to the built-in story
+  } catch (error) {
+    // fall through to the built-in story; the parent can read why in the AI settings
+    await noteAiFailure('story', model, error, started);
   }
   return pickOfflineStory(req.theme, wanted);
 }
@@ -77,10 +85,13 @@ export async function generateStoryOutline(req: StoryOutlineRequest): Promise<St
 
 /** Notes on how the child is doing. Returns null in demo mode, with nothing to summarize, or when the AI fails. Never throws. */
 export async function generateLearnerNotes(req: LearnerNotesRequest): Promise<LearnerNotesOutput | null> {
+  const started = Date.now();
+  let model = '';
   try {
     if (req.attempts.length === 0) return null;
     const loaded = await loadAiConfig();
     if (!loaded.ok) return null;
+    model = loaded.config.chatModel;
     const language = await parentLocale(req.child.locale);
     const notes = await chatJson(asMessages(buildNotesPrompt(req, language)), LearnerNotesSchema, {
       config: loaded.config,
@@ -90,7 +101,8 @@ export async function generateLearnerNotes(req: LearnerNotesRequest): Promise<Le
     const texts = [notes.summary, ...notes.strengths, ...notes.struggles, ...notes.nextFocus];
     // Notes are for a parent, so the gentler tier-2 words (which a parent may well read) are not held against them.
     return checkTexts(texts, 'standard').safe ? notes : null;
-  } catch {
+  } catch (error) {
+    await noteAiFailure('notes', model, error, started);
     return null;
   }
 }
@@ -205,9 +217,12 @@ export function templateWeeklyReport(req: WeeklyReportRequest, language: Locale 
 /** The weekly report for a parent. Never throws; uses the template when the AI is unavailable. */
 export async function generateWeeklyReport(req: WeeklyReportRequest): Promise<WeeklyReportOutput> {
   const language = await parentLocale(req.child.locale);
+  const started = Date.now();
+  let model = '';
   try {
     const loaded = await loadAiConfig();
     if (loaded.ok) {
+      model = loaded.config.chatModel;
       const report = await chatJson(asMessages(buildReportPrompt(req, language)), WeeklyReportSchema, {
         config: loaded.config,
         maxTokens: 900,
@@ -216,8 +231,9 @@ export async function generateWeeklyReport(req: WeeklyReportRequest): Promise<We
       const texts = [report.headline, ...report.highlights, ...report.struggles, ...report.homeActivities];
       if (checkTexts(texts, 'standard').safe) return report;
     }
-  } catch {
+  } catch (error) {
     // fall through to the template
+    await noteAiFailure('report', model, error, started);
   }
   try {
     return templateWeeklyReport(req, language);

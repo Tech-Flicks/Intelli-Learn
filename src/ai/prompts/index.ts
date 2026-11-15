@@ -1,5 +1,5 @@
 /** Prompt builders: pure functions that return `{ system, user }`. */
-export { buildChallengePrompt, buildRemixPrompt, PROMPT_SVG_LIMIT } from './challenge';
+export { buildChallengePrompt, buildRemixPrompt, PROMPT_SVG_LIMIT, type PromptOptions } from './challenge';
 export { buildTutorPrompt, describeAnswerKey, walkthroughIndex, HISTORY_LIMIT } from './tutor';
 export { buildStoryPrompt, clampChapters } from './story';
 export { buildNotesPrompt, NOTES_ATTEMPT_LIMIT } from './notes';

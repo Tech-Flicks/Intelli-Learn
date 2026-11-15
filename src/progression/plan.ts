@@ -9,8 +9,9 @@
  * Order of priority for each plan:
  *   1. placement items while the first-session game is running
  *   2. concept checks for skills that are ready to move up
- *   3. spaced reviews that are due (at most one review in five items)
+ *   3. spaced reviews that are due
  *   4. the regular mix: mostly the current stage, some review, a little stretch
+ * Reviews of both kinds together are at most one item in five.
  */
 import Dexie from 'dexie';
 import { gradeAt, gradeIndex, makeStage, stageGrade, stageGradeIndex } from '@/core/grades';
@@ -51,6 +52,11 @@ export interface PlanOptions {
   now?: number;
   /** Random source for this call. Defaults to the module-level one (see `setRng`). */
   rng?: Rng;
+  /**
+   * Skills whose concept check cannot be built right now (the supply has nothing new about them).
+   * No check is planned for them; they wait, and the child goes on with other skills.
+   */
+  withoutChecks?: readonly string[];
 }
 
 /** What the planner needs to know about a challenge that was planned earlier. */
@@ -128,7 +134,7 @@ function byLeastRecent(a: SkillState, b: SkillState): number {
 export function planFromContext(
   ctx: PlannerContext,
   count: number,
-  opts: { mode?: Mode; strand?: Strand } = {},
+  opts: { mode?: Mode; strand?: Strand; withoutChecks?: readonly string[] } = {},
 ): ChallengePlan[] {
   const { child, rng } = ctx;
   const P = TUNING.plan;
@@ -154,6 +160,7 @@ export function planFromContext(
   const taken = new Set(ctx.pending.map((item) => item.skillId));
   const chosen = new Set<string>();
   const pendingChecks = new Set(ctx.pending.filter((item) => item.purpose === 'check').map((item) => item.skillId));
+  const withoutChecks = new Set(opts.withoutChecks ?? []);
 
   /** The strand's working stage: its aggregate, else the placement estimate, else the enrolled grade. */
   const strandStage = (strand: Strand): StageValue =>
@@ -211,14 +218,21 @@ export function planFromContext(
     const attempted = new Set(state.attempted.map((note) => note.skillId));
     const all = skillsForStrand(strand);
     const unused = all.filter((skill) => !attempted.has(skill.id) && !taken.has(skill.id));
-    const pool = unused.length > 0 ? unused : all;
     // Prefer skills that also exist one grade below and above the estimate, so the result is not
     // cut short by a skill that ends (or only starts) at this grade.
     const index = gradeIndex(grade);
     const around = [gradeAt(index - 1), grade, gradeAt(index + 1)];
-    const roomy = pool.filter((skill) => around.every((g) => skillExistsAt(skill, g)));
-    const atGrade = pool.filter((skill) => skillExistsAt(skill, grade));
-    const candidates = roomy.length > 0 ? roomy : atGrade.length > 0 ? atGrade : pool;
+    const fitting = (pool: readonly SkillDef[]): SkillDef[] => {
+      const roomy = pool.filter((skill) => around.every((g) => skillExistsAt(skill, g)));
+      return roomy.length > 0 ? roomy : pool.filter((skill) => skillExistsAt(skill, grade));
+    };
+    // A skill that is not taught at the estimate's grade would be asked at another grade, which
+    // tells little about the estimate. With few subjects switched on a strand gets more items
+    // than it has such skills: asking a fitting skill a second time is better then.
+    const timesAsked = (skill: SkillDef): number => state.attempted.filter((note) => note.skillId === skill.id).length;
+    const candidates = ([fitting(unused), fitting(all), unused, all].find((list) => list.length > 0) ?? all)
+      .slice()
+      .sort((a, b) => timesAsked(a) - timesAsked(b));
     // Foundational skills (no prerequisites) make the fairest first questions.
     const basics = candidates.filter((skill) => skill.prerequisites.length === 0);
     const skill = pickFrontWeighted(rng, (basics.length > 0 ? basics : candidates).slice(0, 3));
@@ -255,12 +269,22 @@ export function planFromContext(
     const ready = ctx.states
       .filter((state) => state.checkPending && scope.includes(state.strand))
       .filter((state) => !pendingChecks.has(state.skillId) && !chosen.has(state.skillId))
+      .filter((state) => !withoutChecks.has(state.skillId))
       .sort(byLeastRecent);
     for (const state of ready) {
       const skill = getSkill(state.skillId);
       if (!skill || !skillSuitsMode(skill, requestedMode)) continue;
-      const mode: Mode = requestedMode ?? 'quest';
-      const kinds = kindsFor(skill, mode, child.ageGroup);
+      let mode: Mode = requestedMode ?? 'quest';
+      let kinds = kindsFor(skill, mode, child.ageGroup);
+      // A mode with one format only (Robot Coder is always a robot program) cannot test the idea in
+      // another way than the practice did. The check is a plain quest then, where the skill offers more.
+      if (mode !== 'quest' && kinds.length === 1 && kinds[0] === state.recentInteractions[0]) {
+        const plain = kindsFor(skill, 'quest', child.ageGroup);
+        if (plain.some((kind) => kind !== kinds[0])) {
+          mode = 'quest';
+          kinds = plain;
+        }
+      }
       // Test the same idea in a different format from the recent items, where the skill offers one.
       const unseen = kinds.filter((kind) => !state.recentInteractions.includes(kind));
       const notLatest = kinds.filter((kind) => kind !== state.recentInteractions[0]);
@@ -277,6 +301,17 @@ export function planFromContext(
       };
     }
     return null;
+  };
+
+  /**
+   * A skill that ended at a lower grade than the strand has reached: it is at its own top stage
+   * (so there is no check to work towards) and its grade is behind the strand's. More practice
+   * on it teaches nothing; its spaced reviews keep it fresh.
+   */
+  const isOutgrown = (skill: SkillDef): boolean => {
+    const state = stateBySkill.get(skill.id);
+    if (!state || !isTopStage(skill, state.stage)) return false;
+    return stageGradeIndex(state.stage) < stageGradeIndex(strandStage(skill.strand));
   };
 
   // ---- 3. reviews --------------------------------------------------------
@@ -307,7 +342,10 @@ export function planFromContext(
   };
 
   const planPractiseReview = (): ChallengePlan | null => {
-    const rows = reviewable((id) => taken.has(id) || id === lastCompleted);
+    // A skill the child has outgrown only comes back for its spaced reviews.
+    const rows = reviewable((id) => taken.has(id) || id === lastCompleted).filter(
+      (row) => isDue(row.state) || !isOutgrown(row.skill),
+    );
     if (rows.length === 0) return null;
     const previousStrand = trail[trail.length - 1]?.strand;
     const elsewhere = rows.filter((row) => row.state.strand !== previousStrand);
@@ -389,8 +427,11 @@ export function planFromContext(
     );
     const practised = skills.filter((skill) => {
       const state = stateBySkill.get(skill.id);
+      if (state === undefined) return false;
+      // The last resort takes anything, so that the planner always has an answer.
+      if (allowCheckPending) return true;
       // A skill waiting for its concept check gets the check next, not more practice.
-      return state !== undefined && (allowCheckPending || !state.checkPending);
+      return !state.checkPending && !isOutgrown(skill);
     });
     const fresh = skills.filter((skill) => !stateBySkill.has(skill.id));
     const eligible = fresh.filter(isEligible);
@@ -454,15 +495,19 @@ export function planFromContext(
     const check = planCheck();
     if (check) return check;
 
+    // At most one review in `atMostOneIn` items, whichever kind of review it is: a due one, or
+    // one from the regular mix. A due review takes the slot first, so due reviews are part of
+    // the review share and never come on top of it.
     const window = trail.slice(-(TUNING.review.atMostOneIn - 1));
-    if (!window.some((item) => item.purpose === 'review')) {
+    const reviewAllowed = !window.some((item) => item.purpose === 'review');
+    if (reviewAllowed) {
       const due = planDueReview();
       if (due) return due;
     }
 
     const roll = rng();
     if (roll >= P.coreShare && roll < P.coreShare + P.reviewShare) {
-      const review = planPractiseReview();
+      const review = reviewAllowed ? planPractiseReview() : null;
       if (review) return review;
       return planCoreOrStretch('core');
     }
@@ -521,7 +566,7 @@ export async function planNext(childId: string, count: number = 1, opts: PlanOpt
       rng: opts.rng ?? getRng(),
     },
     count,
-    { mode: opts.mode, strand: opts.strand },
+    { mode: opts.mode, strand: opts.strand, withoutChecks: opts.withoutChecks },
   );
 }
 

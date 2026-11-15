@@ -96,7 +96,10 @@ describe('a long journey', () => {
     const changes = await db.stageChanges.where('childId').equals(journey.child.id).toArray();
     const skillUps = changes.filter((c) => c.skillId !== null);
     expect(skillUps.length).toBeGreaterThan(30);
-    expect(skillUps.every((c) => c.reason === 'mastery' && c.to === c.from + 1)).toBe(true);
+    // One step at a time at first, more once a skill has a long run of independent solves.
+    expect(skillUps.every((c) => c.reason === 'mastery' && c.to > c.from && c.to <= c.from + TUNING.mastery.leapSteps)).toBe(true);
+    expect(skillUps.some((c) => c.to === c.from + 1)).toBe(true);
+    expect(skillUps.some((c) => c.to === c.from + TUNING.mastery.leapSteps)).toBe(true);
     // Every step up was earned with a concept check.
     expect(skillUps.length).toBe(journey.plans.filter((p) => p.purpose === 'check').length);
     expect(changes.some((c) => c.reason === 'support')).toBe(false);
@@ -106,7 +109,8 @@ describe('a long journey', () => {
       expect(end.stage ?? 0).toBeGreaterThanOrEqual(start);
     }
     const gained = journey.atEnd.reduce((sum, s, i) => sum + (s.stage ?? 0) - (journey.afterPlacement[i]?.stage ?? 0), 0);
-    expect(gained).toBeGreaterThan(5);
+    // A child who needs no help at all is far above the level: more than a grade per strand in twenty days.
+    expect(gained).toBeGreaterThan(5 * 4);
 
     // Each strand's history is one unbroken chain of levels.
     for (const { strand } of journey.atEnd) {

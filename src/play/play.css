@@ -65,3 +65,37 @@ html.a11y-contrast .play-shimmer {
   background: #ffffff;
   outline: 2px solid var(--color-ink-900);
 }
+
+/*
+ * A phone held sideways: the screen is short and wide. A sheet that kept to the lower half
+ * would show a strip of its content: a teach-back with one answer, rewards without the stars.
+ * Here a sheet may use the whole height below the top bar, and its button stands beside the
+ * content instead of below it. The top of that side column stays empty: Pip sits there while
+ * a sheet is open. (These rules are not in a layer, so they win over the utility classes.)
+ */
+@media (max-height: 30rem) and (max-width: 63.99rem) {
+  .play-sheet {
+    bottom: 0.25rem;
+    width: calc(100% - 1rem);
+    max-height: calc(100dvh - 4.75rem - env(safe-area-inset-top, 0px));
+    flex-direction: row;
+    border-bottom-width: 4px;
+    border-radius: 1.5rem;
+  }
+  .play-sheet-footer {
+    display: flex;
+    flex: none;
+    justify-content: flex-end;
+    width: 15rem;
+    padding: 0.75rem 1rem max(0.75rem, env(safe-area-inset-bottom)) 0;
+  }
+  .play-sheet-footer-empty {
+    /* Pip's place only: no wider than he is. */
+    width: 5.5rem;
+  }
+  /* The answers of a teach-back side by side: both are in view at once. */
+  .play-teach-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}

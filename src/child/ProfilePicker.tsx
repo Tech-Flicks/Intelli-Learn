@@ -6,6 +6,7 @@ import { usePipMood } from '@/bot/pip';
 import { listChildren } from '@/data';
 import { useT } from '@/i18n';
 import { companionEmoji, effectiveControls } from '@/progression';
+import { getResetRequest } from '@/security';
 import { BigButton, ChildShell, IconButton, cx, useReducedMotion } from '@/ui';
 import { useSpeaking } from '@/voice';
 import { useScreenVoice, useSettings, wantsReadAloud } from './hooks';
@@ -37,6 +38,9 @@ export function ProfilePicker() {
   const speaking = useSpeaking();
   const children = useLiveQuery(() => listChildren(), []);
   const settings = useSettings();
+  // A forgotten-password reset that is waiting: it deletes every profile, so a grown-up who
+  // did not ask for it must see it here, on the screen every play session starts from.
+  const resetRequest = useLiveQuery(() => getResetRequest(), []);
   const ready = children !== undefined && settings !== undefined;
 
   // The voice follows the players: on when it is on for any of them, and it speaks by
@@ -137,6 +141,17 @@ export function ProfilePicker() {
               ))}
             </ul>
           </>
+        )}
+
+        {resetRequest != null && (
+          <p
+            role="note"
+            data-testid="reset-notice"
+            className="max-w-xl rounded-2xl border-2 border-sun-500 bg-white px-4 py-3 text-base font-semibold text-ink-900 shadow-card"
+          >
+            <span aria-hidden="true">🔒 </span>
+            {t('child.picker.resetNotice')}
+          </p>
         )}
       </div>
     </ChildShell>

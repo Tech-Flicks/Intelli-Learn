@@ -24,7 +24,7 @@ Stored in the browser's IndexedDB for the app's address:
 
 | What | Details |
 | --- | --- |
-| Parent password | Only a salted hash (PBKDF2-SHA256, 210,000 rounds). The password itself is never stored |
+| Parent password | Only a salted hash (PBKDF2-SHA256, 600,000 rounds; an older hash is renewed the next time the right password is entered). The password itself is never stored |
 | App settings | AI mode and endpoint, parental controls, languages |
 | AI key (Direct mode only) | Encrypted. See "The API key" below |
 | Child profiles | Nickname, avatar emoji, age group, school grade, interests, accessibility choices |
@@ -35,7 +35,9 @@ Stored in the browser's IndexedDB for the app's address:
 | Notes and reports | The learner summary and weekly reports written for the parent |
 | Stories | Story Quest chapters and progress |
 | Canvas library | Every AI-built challenge that passed the checks, with parent ratings. It holds nothing about a child except internal ids |
-| AI usage counters | Number of AI requests per day, for the budget |
+| AI usage counters | Number of AI requests, tokens and failed builds per day, for the budget and the usage meters |
+| Log of recent AI results | For the parent area: what became of the latest AI requests (which task, which model, whether it worked, and an error text the app wrote). It holds nothing a child typed or said, keeps at most 45 entries, and is emptied when the AI settings change |
+| Forgotten-password request | Only while one is pending: when it was asked for and when the wait ends |
 
 Not stored anywhere: audio recordings, photos, location, contacts, email
 addresses, real names (unless you type one as the nickname).
@@ -58,7 +60,7 @@ parent configured. They contain:
 - while the helper is in use: the current challenge, a description of a wrong
   answer, and **what the child typed or said to the helper**. That text is
   marked as data, with an instruction to the AI not to follow it;
-- an idea the child picked or typed in Imagination Studio;
+- an idea the child picked in Imagination Studio (a sentence built from the app's own picture words), or, only while **Open chat** is on, an idea the child typed;
 - in Story Quest: the story chapter the challenge belongs to (the AI wrote it earlier);
 - for the parent's notes and weekly report: skill names, grades, outcomes,
   questions and totals such as minutes played;
@@ -99,11 +101,22 @@ and prefer a provider or a local model you trust. With a local model
    anything else. It never runs AI-written code or shows AI-written web pages.
    AI-drawn pictures (SVG) are stripped of scripts and outside references first.
 2. **Content checks.** All AI text is checked against a built-in blocklist
-   before it is shown or spoken. When the AI endpoint offers a moderation
-   check, challenges are checked with that too. A challenge that fails is
-   thrown away and replaced.
+   before it is shown or spoken. The blocklist also refuses a helper reply
+   that asks the child for personal information (name, age, address, school,
+   family, photos, other apps), that threatens, or that holds a web address.
+   When the AI endpoint offers a moderation check, challenges, story outlines
+   and the helper's free replies in open chat are checked with that too. A
+   challenge that fails is thrown away and replaced; a helper reply that fails
+   is replaced by a line the app wrote itself.
+   A challenge that is reused from the canvas library, or that was already
+   waiting for the child, is checked again with the blocklist under the
+   content strictness of the child who gets it, so a challenge made under
+   "standard" for one child is not shown to a child on "strict" unless it
+   passes the strict rules too. (The moderation check is not repeated then.)
 3. **Sense checks.** The app verifies that a challenge can actually be solved
-   and that the hints do not give the answer away.
+   and that the hints do not give the answer away. The helper is not given the
+   answer key when it writes a nudge, a hint or a chat reply, and its replies
+   are checked for giving the answer away before they are shown.
 4. **The app owns the rules.** Levels, rewards, time limits and the no-skip
    rule are enforced by the app's code. The AI cannot change them, whatever a
    child types.
@@ -113,20 +126,32 @@ and prefer a provider or a local model you trust. With a local model
    or scripts. The Docker image also sends a Content-Security-Policy that
    blocks them at the browser level.
 
-No filter is perfect. The strict setting is the default; review the history
-now and then, rate challenges you do not like (1 or 2 stars removes one for
-good), and sit with younger children.
+No filter is perfect. The blocklist is a list of words and phrasings in
+English, Spanish and Hindi: a new phrasing can get past it, most easily where
+the AI endpoint has no moderation check (many local models do not). It reads
+text, so it cannot read letters that a picture draws as shapes. The check for
+"giving the answer away" does not cover every kind of challenge (not the tap,
+robot and build kinds). And this version has only been run against a mock AI,
+never against a real model (see "Known limitations" in the README). The strict
+setting is the default; review the history now and then, rate challenges you
+do not like (1 or 2 stars removes one for good, also from a child's waiting
+queue), and sit with younger children.
 
 ## Parent controls
 
 Behind the parent password:
 
 - **Daily play time** and **allowed hours** (defaults: 30 minutes, 7:00 to 20:00).
-- **Subjects** switched on or off (maths, science, technology, engineering, logic).
+- **Subjects** switched on or off (maths, science, technology, engineering,
+  logic). A challenge of a switched-off subject that was waiting or unfinished
+  is thrown away, not served.
 - **Voice output** on or off.
 - **Microphone** on or off. Off by default.
 - **Open chat** on or off: whether the child may ask the helper about things
   beyond the current challenge and type their own ideas. Off by default.
+  While it is off the child has no text box, Imagination Studio offers only
+  the app's own picture words, and text typed into the address of the play
+  screen is ignored.
 - **AI pictures** on or off. Off by default.
 - **Real-world missions** on or off.
 - **Content strictness**: strict (default) or standard.
@@ -143,7 +168,19 @@ it for 30 seconds; every further five wrong ones lock it twice as long, up to
 15 minutes.
 There is no password reset by email, because there are no accounts: if the
 password is lost, the only way back in is a full reset of the app's data on
-that device.
+that device. So that a child cannot do that in one sitting, "Forgot password?"
+only starts a **24-hour wait**. During the wait nothing is deleted, the request
+is shown on the password screen and on the profile picker where you will see
+it, and entering the right password cancels it. Only after the wait can the
+reset be confirmed, and never while the gate is locked after wrong passwords.
+If you see such a notice and did not ask for it, enter your password.
+
+Limits you should know: the wait is measured with the device's own clock, so
+someone who can change the device's date in its system settings can shorten it
+(setting the clock back does not count as waiting). The password must have at
+least 6 characters; choose a longer one. And the gate protects the parent
+area of the app, not the device: someone who can open the browser's settings
+can clear the app's data, which is the same as a full reset.
 
 ## Voice
 
@@ -151,7 +188,7 @@ that device.
 - **Listening** happens only while the child holds or taps the microphone
   button, and only if a parent enabled the microphone. Intelli-Learn never
   stores audio and never sends audio to the AI. It only receives the
-  recognised text.
+  recognised text. Closing the helper stops the listening at once.
 - Turning speech into text is done by the browser. **Some browsers send the
   audio to the browser maker's speech service to do this** (Chrome does). If
   that is not acceptable, leave the microphone off: the app works fully without it.
@@ -174,6 +211,10 @@ the device:
   has to send the key with every request, and a person with access to the
   browser's developer tools, a malicious browser extension or malware on the
   device can capture it there.
+- The key is only ever sent to the service it was entered for. If the service
+  address is changed to another one (also just for "Test connection"), the
+  saved key is not used: the app asks for the key of the new service and
+  removes the old key when the new address is saved.
 
 So, for Direct mode:
 
@@ -194,8 +235,9 @@ everything. It contains the child profiles, progress, challenges and answers,
 helper conversations, rewards, notes, reports, stories, the canvas library and
 the settings.
 
-It never contains the parent password hash, the AI key, or the device's secret
-encryption key.
+It never contains the parent password hash, the AI key, the device's secret
+encryption key, the AI usage counters, the log of recent AI results or a
+pending forgotten-password request.
 
 The backup file is **not encrypted** and includes nicknames and the full
 learning history. Keep it somewhere private.

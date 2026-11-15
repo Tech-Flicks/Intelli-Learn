@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import type { BuildInteraction } from '@/core/schemas';
 import { buildTotals } from '../build';
 import type { WidgetProps } from './ChoiceWidget';
-import { cx, fill, FOCUS_RING, HINT_GLOW } from './common';
+import { cx, fill, FOCUS_RING, hasLongWord, HINT_GLOW } from './common';
 import { formatNumber } from './draft';
 
 interface MeterProps {
@@ -101,7 +101,7 @@ export function BuildWidget({ interaction, value, onChange, disabled, reducedMot
           reducedMotion={reducedMotion}
         />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className={cx('grid gap-3', hasLongWord(interaction.parts.map((part) => part.label)) ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2')}>
         {interaction.parts.map((part) => {
           const picked = value.includes(part.id);
           return (
@@ -116,7 +116,7 @@ export function BuildWidget({ interaction, value, onChange, disabled, reducedMot
               aria-label={`${part.label}. ${interaction.powerLabel} ${formatNumber(part.power)}, ${interaction.costLabel} ${formatNumber(part.cost)}`}
               onClick={() => toggle(part.id)}
               className={cx(
-                'relative flex min-h-24 flex-col items-center justify-center gap-1 rounded-3xl border-4 px-2 py-2 text-center text-lg font-bold shadow-sm transition-colors',
+                'relative flex min-h-24 min-w-0 flex-col items-center justify-center gap-1 rounded-3xl border-4 px-2 py-2 text-center text-lg font-bold shadow-sm transition-colors',
                 picked ? 'border-brand-500 bg-brand-100 text-brand-700' : 'border-brand-100 bg-white text-ink-900',
                 disabled && 'opacity-70',
                 highlight.has(part.id) && HINT_GLOW,
@@ -128,7 +128,7 @@ export function BuildWidget({ interaction, value, onChange, disabled, reducedMot
                   {part.emoji}
                 </span>
               ) : null}
-              <span className="break-words">{part.label}</span>
+              <span className="max-w-full min-w-0 wrap-anywhere">{part.label}</span>
               <span className="flex flex-wrap justify-center gap-2 text-base font-extrabold" aria-hidden="true">
                 <span className="rounded-full bg-leaf-400/25 px-2 text-leaf-600">⚡ {formatNumber(part.power)}</span>
                 <span className="rounded-full bg-sun-300/60 px-2 text-ink-700">🪙 {formatNumber(part.cost)}</span>

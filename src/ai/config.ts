@@ -1,11 +1,12 @@
 /**
  * Works out whether the parent's AI settings are usable and returns them in
- * one resolved shape. This is the only place that reads the stored API key.
+ * one resolved shape. This is the only place that reads the stored API key,
+ * and it only gets the key for the service the key was entered for.
  */
 import { DEFAULT_PROXY_BASE_URL } from '@/core/defaults';
 import type { AiProvider } from '@/core/types';
 import { getSettings } from '@/data';
-import { getApiKey } from '@/security';
+import { getApiKeyFor, hasApiKey } from '@/security';
 
 export interface AiConfig {
   provider: 'direct' | 'proxy';
@@ -31,6 +32,9 @@ export interface AiConfigOverride {
 }
 
 export const REASON_DEMO = 'Demo mode: the built-in challenges are used and no AI service is contacted.';
+
+export const REASON_OTHER_ADDRESS =
+  'The saved API key belongs to another address and is not sent to this one. Enter the API key of this service.';
 
 export function normalizeBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '');
@@ -102,8 +106,11 @@ export async function loadAiConfig(override: AiConfigOverride = {}): Promise<AiC
       return { ok: false, provider, reason: 'The AI address must start with http:// or https://, for example https://api.openai.com/v1.' };
     }
     const typedKey = override.apiKey?.trim();
-    const apiKey = typedKey !== undefined && typedKey !== '' ? typedKey : await getApiKey();
+    // The stored key is only ever used for the service it was entered for, never for an
+    // address that was typed later (for example in a connection test).
+    const apiKey = typedKey !== undefined && typedKey !== '' ? typedKey : await getApiKeyFor(baseUrl);
     if (!apiKey && !isLocalAddress(baseUrl)) {
+      if (await hasApiKey()) return { ok: false, provider, reason: REASON_OTHER_ADDRESS };
       return { ok: false, provider, reason: 'No API key is stored. Enter the key of the AI service, or switch to demo mode.' };
     }
     return { ok: true, config: { provider, baseUrl, apiKey: apiKey ?? null, chatModel, imageModel, temperature } };

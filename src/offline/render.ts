@@ -34,6 +34,7 @@ function titleOf(set: KnowledgeSet, kind: InteractionKind): string {
 const fitsCard = (it: Item): boolean => it.emoji !== undefined || it.label.length <= 16;
 
 function cardOf(it: Item, id: string, tappable: boolean): Card {
+  if (it.emoji && it.wide) return { id, text: it.emoji, label: cap(it.label), wide: true, tappable };
   return it.emoji ? { id, emoji: it.emoji, label: cap(it.label), tappable } : { id, text: cap(it.label), tappable };
 }
 
@@ -137,11 +138,19 @@ function catSort(ctx: Ctx, set: CatSet): Challenge | null {
   });
 }
 
+/**
+ * A group that is defined by what its items are not ("a sum that does not make 5"). A Pre-K or
+ * Kindergarten child sorts into such a group, but is never asked to find it: "tap the ones that
+ * do not ..." asks for the idea and its negation at once.
+ */
+const negated = (b: CatBin): boolean => /\b(not|never)\b/i.test(b.one);
+const askable = (ctx: Ctx, b: CatBin): boolean => !(ctx.young && negated(b));
+
 function catChoice(ctx: Ctx, set: CatSet): Challenge | null {
   const wrongCount = ctx.young ? 2 : 3;
   const targets = set.bins.filter((b) => {
     const others = set.bins.filter((o) => o !== b).reduce((sum, o) => sum + o.items.length, 0);
-    return b.items.length > 0 && others >= wrongCount;
+    return b.items.length > 0 && others >= wrongCount && askable(ctx, b);
   });
   if (targets.length === 0) return null;
   const target = ctx.rng.pick(targets);
@@ -176,7 +185,7 @@ function catPickForScene(ctx: Ctx, set: CatSet): { target: CatBin; hits: Item[];
   const bins = set.bins
     .map((b) => ({ b, ok: distinctBy(b.items.filter(fitsCard), lookOf) }))
     .filter((entry) => entry.ok.length > 0);
-  const targets = bins.filter((entry) => bins.filter((o) => o !== entry).reduce((sum, o) => sum + o.ok.length, 0) >= 2);
+  const targets = bins.filter((entry) => askable(ctx, entry.b) && bins.filter((o) => o !== entry).reduce((sum, o) => sum + o.ok.length, 0) >= 2);
   if (targets.length === 0) return null;
   const chosen = ctx.rng.pick(targets);
   const hitCount = Math.min(chosen.ok.length, ctx.young ? ctx.rng.int(2, 3) : ctx.rng.int(2, 4));
@@ -270,7 +279,8 @@ const ODD_TEACH: Teach = [
 
 function catOdd(ctx: Ctx, set: CatSet, kind: 'choice' | 'tap'): Challenge | null {
   const need = (b: CatBin): Item[] => distinctBy(kind === 'tap' ? b.items.filter(fitsCard) : b.items, lookOf);
-  const majors = set.bins.filter((b) => need(b).length >= 3);
+  // "X is not a sum that does not make 3" is no explanation: the three that belong together share a positive idea.
+  const majors = set.bins.filter((b) => need(b).length >= 3 && askable(ctx, b));
   if (majors.length === 0) return null;
   const major = ctx.rng.pick(majors);
   const minors = set.bins.filter((b) => b !== major && need(b).length >= 1);
@@ -303,7 +313,7 @@ function catOdd(ctx: Ctx, set: CatSet, kind: 'choice' | 'tap'): Challenge | null
       `So ${odd.label} does not belong.`,
     ],
     explanation: ctx.young
-      ? `${cap(odd.label)} is not ${major.one}.`
+      ? negated(minor) ? `${cap(odd.label)} is not ${major.one}.` : `${cap(odd.label)} is ${minor.one}.`
       : `Three of them are ${major.many}. ${cap(odd.label)} is ${minor.one}, so it is the odd one out.`,
     teach: ODD_TEACH,
     funFact: set.fun,
@@ -669,6 +679,8 @@ export interface Variant {
   /** Relative chance of being tried first. */
   weight: number;
   make: (ctx: Ctx) => Challenge | null;
+  /** True when the content belongs to the mode's framing, not to the plan's skill (a fix-the-bot item for a math skill). */
+  borrowed?: boolean;
 }
 
 /** The ways one set can become a challenge of the given kind. */

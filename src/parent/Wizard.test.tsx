@@ -5,6 +5,9 @@ import { STRANDS } from '@/core/types';
 import { getSettings, listChildren } from '@/data';
 import { strandName } from '@/i18n';
 import { hasAdminPassword, hasApiKey, useParentGate } from '@/security';
+import { render } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { SetupWizard } from './index';
 import { freshDevice, renderParent, TEST_PASSWORD } from './testSupport';
 
 const next = () => userEvent.click(screen.getByRole('button', { name: 'Next' }));
@@ -71,6 +74,44 @@ describe('setup wizard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open parent area' }));
     await screen.findByRole('heading', { name: 'Overview', level: 1 });
     expect(screen.getByTestId('where')).toHaveTextContent('/parent');
+  }, 20_000);
+
+  it('locks the gate when the last step is left by the back button instead of its two buttons', async () => {
+    function BackButton() {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(-1)}>
+          device back
+        </button>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={['/kids', '/setup']} initialIndex={1}>
+        <BackButton />
+        <Routes>
+          <Route path="/setup" element={<SetupWizard />} />
+          <Route path="/kids" element={<p>Who is playing?</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { name: 'Welcome to Intelli-Learn' });
+    await userEvent.click(screen.getByRole('button', { name: /^Let.s start$/ }));
+    await screen.findByRole('heading', { name: 'Choose a parent password' });
+    await enterPasswords(TEST_PASSWORD, TEST_PASSWORD);
+    await next();
+    await screen.findByRole('heading', { name: 'Connect an AI (optional)' });
+    await next();
+    await screen.findByRole('heading', { name: 'Set the family rules' });
+    await next();
+    await screen.findByRole('heading', { name: 'Add your first child' });
+    await userEvent.type(screen.getByLabelText(/^Nickname/), 'Mia');
+    await userEvent.click(screen.getByRole('button', { name: 'Finish setup' }));
+    await screen.findByRole('heading', { name: 'All set!' }, { timeout: 8000 });
+
+    // The device goes to the child without "Play" being pressed.
+    await userEvent.click(screen.getByRole('button', { name: 'device back' }));
+    await screen.findByText('Who is playing?');
+    await waitFor(() => expect(useParentGate.getState().unlocked).toBe(false));
   }, 20_000);
 
   it('does not go on when the two passwords differ', async () => {

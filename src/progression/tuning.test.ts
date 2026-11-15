@@ -17,6 +17,12 @@ describe('TUNING', () => {
     expect(TUNING.mastery.afterCheckWithHelp).toBe(60);
     expect(TUNING.mastery.afterCheckWithWalkthrough).toBe(40);
     expect(TUNING.mastery.strandWeightCap).toBe(10);
+    expect(TUNING.mastery.accelerateStreak).toBe(5);
+    expect(TUNING.mastery.accelerateSteps).toBe(2);
+    expect(TUNING.mastery.leapStreak).toBe(8);
+    expect(TUNING.mastery.leapSteps).toBe(4);
+    expect(TUNING.mastery.secondTryMaxWrong).toBe(1);
+    expect(TUNING.mastery.secondTryMinAnswers).toBe(4);
   });
 
   it('never lets a review item move mastery more than a regular item', () => {
@@ -43,7 +49,9 @@ describe('TUNING', () => {
     expect(TUNING.placement.totalItems).toBe(8);
     expect(TUNING.placement.startGradeOffset).toBe(-1);
     expect(TUNING.placement.startStep).toBe('growing');
-    expect(TUNING.placement.steps).toEqual({ independent: 3, 'second-try': 1, nudge: 0, hint: -1, walkthrough: -3 });
+    expect(TUNING.placement.steps).toEqual({ independent: 4, 'second-try': 1, nudge: 0, hint: -1, walkthrough: -3 });
+    expect(TUNING.placement.maxMove).toBe(8);
+    expect(TUNING.placement.maxItemGap).toBe(4);
     expect(TUNING.plan.coreShare + TUNING.plan.reviewShare + TUNING.plan.stretchShare).toBeCloseTo(1);
     expect(TUNING.plan.coreShare).toBe(0.7);
     expect(TUNING.plan.reviewShare).toBe(0.2);

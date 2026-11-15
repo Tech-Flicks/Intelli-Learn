@@ -129,11 +129,37 @@ export async function decryptSecret(blob: EncryptedBlob): Promise<string> {
   return new TextDecoder('utf-8', { fatal: true }).decode(plain);
 }
 
-/** Stores the AI API key encrypted in settings.ai.apiKeyCipher. Null or blank removes it. */
-export async function setApiKey(plain: string | null): Promise<void> {
+/**
+ * Where the address of the service the stored API key was entered for is kept (`db.kv`,
+ * never in a backup). Only the origin is stored: scheme, host and port.
+ */
+export const API_KEY_ORIGIN_KEY = 'security:api-key-origin';
+
+/** Scheme, host and port of an http(s) address, or null when it is not one. */
+export function serviceOrigin(address: string): string | null {
+  try {
+    const url = new URL(address.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stores the AI API key encrypted in settings.ai.apiKeyCipher. Null or blank removes it.
+ *
+ * `address` is the service the key was entered for. The key is bound to it: `getApiKeyFor`
+ * hands the key out for that service only, so a key is never sent to an address that was
+ * typed later. Without `address` the key belongs to the Direct address in the settings.
+ */
+export async function setApiKey(plain: string | null, address?: string): Promise<void> {
   const trimmed = plain?.trim() ?? '';
   const apiKeyCipher = trimmed.length > 0 ? await encryptSecret(trimmed) : null;
+  const origin = apiKeyCipher !== null && address !== undefined ? serviceOrigin(address) : null;
+  // The old binding goes first, so a new key is never paired with the address of the old one.
+  await db.kv.delete(API_KEY_ORIGIN_KEY);
   await updateSettings((current) => ({ ...current, ai: { ...current.ai, apiKeyCipher } }));
+  if (origin !== null) await db.kv.put({ key: API_KEY_ORIGIN_KEY, value: origin });
 }
 
 /**
@@ -154,4 +180,42 @@ export async function getApiKey(): Promise<string | null> {
 /** True when a usable API key is stored. */
 export async function hasApiKey(): Promise<boolean> {
   return (await getApiKey()) !== null;
+}
+
+/**
+ * The origin of the service the stored key belongs to, or null when no usable key is stored
+ * or its service is not known. A key saved before addresses were remembered belongs to the
+ * Direct address in the settings; in Proxy mode that address is gone, so such a key belongs
+ * nowhere and has to be entered again. Read-only. Never throws.
+ */
+export async function getApiKeyOrigin(): Promise<string | null> {
+  try {
+    if (!(await hasApiKey())) return null;
+    const recorded = (await db.kv.get(API_KEY_ORIGIN_KEY))?.value;
+    if (typeof recorded === 'string' && recorded !== '') return recorded;
+    const { ai } = await getSettings();
+    return ai.provider === 'proxy' ? null : serviceOrigin(ai.baseUrl);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Writes down the service the stored key belongs to, when that is known and not written
+ * down yet. Call it before the address in the settings changes, so that a key saved before
+ * addresses were remembered does not follow the address to a new service.
+ */
+export async function keepApiKeyOrigin(): Promise<void> {
+  const origin = await getApiKeyOrigin();
+  if (origin !== null) await db.kv.put({ key: API_KEY_ORIGIN_KEY, value: origin });
+}
+
+/**
+ * The stored API key, but only for the service it was entered for (same scheme, host and
+ * port as `address`). Null for every other address. Never throws.
+ */
+export async function getApiKeyFor(address: string): Promise<string | null> {
+  const wanted = serviceOrigin(address);
+  if (wanted === null || wanted !== (await getApiKeyOrigin())) return null;
+  return getApiKey();
 }

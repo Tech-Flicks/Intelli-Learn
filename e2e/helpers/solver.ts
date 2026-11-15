@@ -20,6 +20,9 @@ type Of<K extends InteractionKind> = Extract<Interaction, { kind: K }>;
 
 const looks = (item: { label: string; emoji?: string | undefined }): string => `${item.emoji ?? ''}|${item.label.trim().toLowerCase()}`;
 
+/** `PLAY.doubleSubmitMs` of the play screen: the same wrong answer again within this time is one try. */
+const DOUBLE_TAP_MS = 800;
+
 // ---------------------------------------------------------------------------
 // Finding the challenge that is on screen
 // ---------------------------------------------------------------------------
@@ -383,6 +386,8 @@ export async function answerWrongly(page: Page, record: ChallengeRecord): Promis
 
 /** Presses Check again without changing anything: after a wrong try the child's work is kept, so this is another wrong try. */
 export async function checkAgain(page: Page): Promise<void> {
+  // Not at once: the same wrong answer again within a moment is a double tap on Check and counts as one try.
+  await page.waitForTimeout(DOUBLE_TAP_MS + 200);
   await pressCheck(page);
   await expect(playScreen(page)).toHaveAttribute('data-phase', 'answering');
   await expect(page.getByTestId('solved-sheet')).toHaveCount(0);

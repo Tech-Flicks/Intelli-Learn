@@ -8,10 +8,19 @@ import { resetAiSession } from '@/ai';
 import { LOCALES, type Locale, type ParentalControls, type Settings } from '@/core/types';
 import { downloadBackup, exportBackup, importBackup, readBackupFile, updateSettings, type ImportResult } from '@/data';
 import { LOCALE_NAMES } from '@/i18n';
-import { changeAdminPassword, getLockoutState, hasApiKey, setApiKey, useParentGate } from '@/security';
+import {
+  changeAdminPassword,
+  getApiKeyOrigin,
+  getLockoutState,
+  hasApiKey,
+  keepApiKeyOrigin,
+  serviceOrigin,
+  setApiKey,
+  useParentGate,
+} from '@/security';
 import { Button, ConfirmDialog, Field, PasswordInput, Select, TabPanel, Tabs, useToast } from '@/ui';
 import { AiConnectionForm } from './forms/AiConnectionForm';
-import { aiDraftOf, aiSettingsOf, sameAiDraft, validateAiDraft, type AiDraft, type AiErrors } from './forms/aiForm';
+import { aiDraftOf, aiSettingsOf, draftBaseUrl, sameAiDraft, validateAiDraft, type AiDraft, type AiErrors } from './forms/aiForm';
 import { resetDevice } from './reset';
 import { ControlsForm, sameControls, validateControls, type ControlsErrors } from './forms/ControlsForm';
 import { validateNewPassword, type NewPasswordErrors } from './forms/password';
@@ -57,16 +66,26 @@ function AiSection({ settings }: { settings: Settings }) {
   const [errors, setErrors] = useState<AiErrors>({});
   const [busy, setBusy] = useState(false);
   const [keyVersion, setKeyVersion] = useState(0);
-  // Only "is a key stored", never the key itself.
+  // Only "is a key stored" and which service it was entered for, never the key itself.
   const storedKey = useAsync(() => hasApiKey(), [keyVersion]);
-  const hasStoredKey = storedKey === true;
+  const keyOrigin = useAsync(() => getApiKeyOrigin(), [keyVersion]);
+  const anyKey = storedKey === true;
+  const direct = draft.provider === 'direct';
+  // In Direct mode the saved key counts only for the service it was entered for: it is never
+  // sent to an address typed later, so that address needs its own key.
+  const keyFits = anyKey && keyOrigin != null && keyOrigin === serviceOrigin(draftBaseUrl(draft));
+  const hasStoredKey = direct ? keyFits : anyKey;
+  const keyForOtherAddress = direct && anyKey && keyOrigin !== undefined && !keyFits;
 
   const dirty = !sameAiDraft(draft, aiDraftOf(settings.ai));
   useUnsavedChanges(dirty);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    const problems = validateAiDraft(draft, hasStoredKey, t);
+    // Read again right now rather than from what the form last showed.
+    const stored = await hasApiKey();
+    const fits = stored && (await getApiKeyOrigin()) === serviceOrigin(draftBaseUrl(draft));
+    const problems = validateAiDraft(draft, direct ? fits : stored, t);
     setErrors(problems);
     if (Object.keys(problems).length > 0) {
       toast.error(t('parent.form.fixErrors'));
@@ -74,10 +93,14 @@ function AiSection({ settings }: { settings: Settings }) {
     }
     setBusy(true);
     try {
+      // Before the address changes: a key saved earlier stays tied to the service it was entered for.
+      await keepApiKeyOrigin();
       const saved = await updateSettings((current) => ({ ...current, ai: aiSettingsOf(draft, current.ai) }));
       const typedKey = draft.apiKey.trim();
       if (draft.removeKey) await setApiKey(null);
-      else if (draft.provider === 'direct' && typedKey !== '') await setApiKey(typedKey);
+      else if (direct && typedKey !== '') await setApiKey(typedKey, saved.ai.baseUrl);
+      // The key of another service is not kept next to the new address.
+      else if (direct && stored && !fits) await setApiKey(null);
       // The AI client must forget what it learned about the previous endpoint.
       resetAiSession();
       setDraft(aiDraftOf(saved.ai));
@@ -101,6 +124,7 @@ function AiSection({ settings }: { settings: Settings }) {
           }}
           errors={errors}
           hasStoredKey={hasStoredKey}
+          keyForOtherAddress={keyForOtherAddress}
           disabled={busy}
         >
           <div className="mt-4 border-t border-ink-200 pt-4">

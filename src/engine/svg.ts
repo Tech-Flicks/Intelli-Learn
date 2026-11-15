@@ -67,13 +67,20 @@ function decodeEntities(value: string): string {
     .replace(/&#(\d+);?/g, (_, dec: string) => String.fromCodePoint(Math.min(parseInt(dec, 10) || 0, 0x10ffff)));
 }
 
+/** CSS functions that take an address without `url(`. `image(` also covers `-webkit-image-set(` by its ending. */
+const CSS_LOADERS = ['image-set(', 'image(', 'src(', 'cross-fade(', 'element('];
+/** An address anywhere in the text: a scheme that loads, or `//host`. A small drawing has no use for either. */
+const CSS_ADDRESS = /\/\/|(?:https?|ftp|wss?|file|blob|data|javascript|vbscript):/;
+
 /** True when the CSS text could load something or run something. */
 function cssIsUnsafe(css: string): boolean {
   const flat = squash(decodeEntities(css));
   if (flat.includes('\\')) return true; // CSS escapes can hide any keyword
   if (flat.includes('<')) return true; // markup has no place inside a stylesheet
-  if (flat.includes('@import') || flat.includes('expression(') || flat.includes('javascript:')) return true;
+  if (flat.includes('@import') || flat.includes('expression(')) return true;
   if (flat.includes('behavior:') || flat.includes('-moz-binding')) return true;
+  if (CSS_LOADERS.some((loader) => flat.includes(loader))) return true;
+  if (CSS_ADDRESS.test(flat)) return true;
   return hasExternalUrl(flat);
 }
 

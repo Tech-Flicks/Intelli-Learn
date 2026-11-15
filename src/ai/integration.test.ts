@@ -11,6 +11,8 @@
  * checks: all eight interaction kinds, the tutor, a story, and the usage
  * counters a parent sees.
  */
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { makeStage, stageGrade } from '@/core/grades';
 import { ChallengeSchema, StoryOutlineSchema, TutorReplySchema } from '@/core/schemas';
@@ -32,6 +34,7 @@ import {
   generateStoryOutline,
   getAiStatus,
   resetAiSession,
+  testConnection,
   tutorReply,
   type ChildContext,
   type GenerateChallengeRequest,
@@ -329,5 +332,69 @@ describe('@/ai end to end against the mock AI server', () => {
     const sent = JSON.stringify((await mockLog()).map((entry) => entry.body));
     expect(sent).not.toContain('child-secret-id-123');
     expect(sent).not.toContain('sk-integration-key');
+  });
+});
+
+describe('the stored API key and a newly typed service address', () => {
+  /** Another service: it answers like an OpenAI-compatible server and remembers the credentials it was sent. */
+  let other: Server;
+  let otherUrl = '';
+  const seen: (string | undefined)[] = [];
+
+  beforeAll(async () => {
+    other = createServer((req, res) => {
+      seen.push(req.headers.authorization);
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '{"ok": true}' }, finish_reason: 'stop' }] }));
+      });
+    });
+    await new Promise<void>((resolve) => other.listen(0, '127.0.0.1', resolve));
+    otherUrl = `http://127.0.0.1:${(other.address() as AddressInfo).port}/v1`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => other.close(() => resolve()));
+  });
+
+  beforeEach(async () => {
+    await db.delete();
+    await db.open();
+    seen.length = 0;
+    await updateSettings((current) => ({
+      ...current,
+      ai: { ...current.ai, provider: 'direct', baseUrl: mock.baseUrl, chatModel: 'mock-stem-1' },
+    }));
+    resetAiSession();
+  });
+
+  it('is never sent to an address it was not entered for', async () => {
+    await setApiKey('sk-integration-key', mock.baseUrl);
+    await testConnection({ provider: 'direct', baseUrl: otherUrl, chatModel: 'mock-stem-1' });
+    expect(seen.length).toBeGreaterThan(0);
+    for (const header of seen) expect(header ?? '').not.toContain('sk-integration-key');
+  });
+
+  it('is not sent to another address either when it was saved before addresses were remembered', async () => {
+    await setApiKey('sk-integration-key');
+    await testConnection({ provider: 'direct', baseUrl: otherUrl, chatModel: 'mock-stem-1' });
+    for (const header of seen) expect(header ?? '').not.toContain('sk-integration-key');
+    // The saved address still gets it.
+    expect(await getAiStatus()).toMatchObject({ provider: 'direct', ready: true });
+  });
+
+  it('is sent with a key typed for the new address, and that key only', async () => {
+    await setApiKey('sk-integration-key', mock.baseUrl);
+    const result = await testConnection({ provider: 'direct', baseUrl: otherUrl, chatModel: 'mock-stem-1', apiKey: 'sk-typed-now' });
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(['Bearer sk-typed-now']);
+  });
+
+  it('asks for the key of a new service on the internet without contacting it', async () => {
+    await setApiKey('sk-integration-key', mock.baseUrl);
+    const result = await testConnection({ provider: 'direct', baseUrl: 'https://collector.example/v1', chatModel: 'mock-stem-1' });
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/belongs to another address/);
   });
 });

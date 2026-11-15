@@ -65,8 +65,9 @@ export function candidateTiers(ctx: Ctx): Variant[][] {
   if (kind === 'robot') first.push({ weight: 1, make: robotChallenge });
   if (kind === 'build') first.push({ weight: 1, make: buildChallenge });
   if (kind === 'choice') {
-    if (plan.mode === 'fixbot' && (plan.strand === 'math' || plan.strand === 'technology')) first.push({ weight: 8, make: fixbotChallenge });
-    else if (plan.skillId === 'technology-debugging') first.push({ weight: 3, make: fixbotChallenge });
+    if (plan.mode === 'fixbot' && (plan.strand === 'math' || plan.strand === 'technology')) {
+      first.push({ weight: 8, make: fixbotChallenge, borrowed: plan.skillId !== 'technology-debugging' });
+    } else if (plan.skillId === 'technology-debugging') first.push({ weight: 3, make: fixbotChallenge });
   }
   if (kind === 'choice' || kind === 'tap') {
     if (plan.skillId === 'logic-patterns' && g <= 4) first.push({ weight: 6, make: patternChallenge });
@@ -147,6 +148,60 @@ function generate(ctx: Ctx, avoid: ReadonlySet<string>): { fresh?: Challenge; sp
     }
   }
   return spare ? { spare } : {};
+}
+
+export interface OwnSkillOptions extends OfflinePickOptions {
+  /** Leaves a candidate out, for example one the child has already solved. */
+  accept?: (challenge: Challenge) => boolean;
+}
+
+/** Hand-written items of the plan's own skill that suit its kind, grade and mode. */
+function ownCurated(ctx: Ctx): Challenge[] {
+  const { plan, g } = ctx;
+  return CURATED.filter(
+    (item) =>
+      item.skillId === plan.skillId &&
+      item.challenge.interaction.kind === plan.interaction &&
+      inGrades(item.grades, g) &&
+      (item.mode === plan.mode || (GENERIC_MODES.has(plan.mode) && item.mode !== 'mission')),
+  ).map((item) => JSON.parse(JSON.stringify(item.challenge)) as Challenge);
+}
+
+/**
+ * A challenge that was made for the plan's own skill: a hand-written item of that skill, or one
+ * from the skill's own generators. Unlike `pickOfflineChallenge` it never widens the search to a
+ * neighbouring skill or another strand, so it can come back empty: null means the bank has
+ * nothing for this skill at this grade in this kind (or nothing that `accept` takes).
+ *
+ * Use it where the content has to be about the skill itself: a concept check that raises the
+ * skill's stage must not be a challenge about something else.
+ */
+export function pickOwnSkillChallenge(plan: ChallengePlan, opts: OwnSkillOptions = {}): Challenge | null {
+  const seed = (opts.seed ?? defaultSeed()) ^ hashText(`${plan.skillId}|${plan.interaction}|${plan.stage}|${plan.mode}`);
+  const avoid = new Set((opts.avoidTitles ?? []).map(normalize));
+  const accept = opts.accept ?? (() => true);
+  const kind = plan.interaction;
+  let spare: Challenge | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const ctx = makeCtx(plan, seed + attempt * 7919);
+    const own = (candidateTiers(ctx)[0] ?? []).filter((variant) => variant.borrowed !== true);
+    const makers: (() => Challenge | null)[] = [
+      ...ctx.rng.shuffle(ownCurated(ctx)).map((challenge) => () => challenge),
+      ...weightedOrder(ctx.rng, own).slice(0, 14).map((variant) => () => variant.make(ctx)),
+    ];
+    for (const make of makers) {
+      let made: Challenge | null = null;
+      try {
+        made = make();
+      } catch {
+        made = null;
+      }
+      if (!sound(made, kind) || !accept(made)) continue;
+      if (!avoid.has(normalize(made.title))) return made;
+      spare ??= made;
+    }
+  }
+  return spare;
 }
 
 /** Simple, always-valid challenges: the last resort for each kind of interaction. */

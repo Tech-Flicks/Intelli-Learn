@@ -15,6 +15,16 @@ export const TUNING = {
     gain: { independent: 25, 'second-try': 15, nudge: 10, hint: 5, walkthrough: 0 } as PerOutcome,
     /** A review item re-tests something already learned, so it moves mastery less (independent gives 10 only). */
     reviewGain: { independent: 10, 'second-try': 6, nudge: 4, hint: 2, walkthrough: 0 } as PerOutcome,
+    /**
+     * A solve after wrong tries without help ('second-try') is credited as solved alone only after
+     * at most this many wrong tries ...
+     */
+    secondTryMaxWrong: 1,
+    /**
+     * ... on an item with at least this many possible answers. Otherwise the answer was found by
+     * trying what was left, and the item is credited like a nudge (also for a concept check).
+     */
+    secondTryMinAnswers: 4,
     /** Extra mastery when the child explained the idea back correctly. */
     teachBackBonus: 5,
     /** Mastery at which the skill is ready to move up one stage step (confirmed by a concept check). */
@@ -25,6 +35,16 @@ export const TUNING = {
     fastTrackStreak: 3,
     /** ... at this mastery or more also makes the skill ready to move up. */
     fastTrackAt: 60,
+    /**
+     * A child who is clearly above the level should not have to climb it one step at a time.
+     * When the passed concept check was solved at the first try and completes a run of this many
+     * independent solves on the skill, the skill moves up `accelerateSteps` steps ...
+     */
+    accelerateStreak: 5,
+    accelerateSteps: 2,
+    /** ... and after a run of this many, a whole grade (never past the top of the skill). */
+    leapStreak: 8,
+    leapSteps: 4,
     /** Upper bound of mastery. A skill at its top stage stays here. */
     max: 100,
     /** Consecutive walkthroughs on a skill that move it down one stage step. */
@@ -88,7 +108,14 @@ export const TUNING = {
     /** ... at this step. */
     startStep: 'growing' as const,
     /** Stage steps the strand estimate moves after one placement item. */
-    steps: { independent: 3, 'second-try': 1, nudge: 0, hint: -1, walkthrough: -3 } as PerOutcome,
+    steps: { independent: 4, 'second-try': 1, nudge: 0, hint: -1, walkthrough: -3 } as PerOutcome,
+    /** A strand's estimate ends at most this many steps from where it started, however many items the strand gets. */
+    maxMove: 8,
+    /**
+     * An item pitched further than this from the estimate (the skill does not exist at the estimate's
+     * grade) only counts for what it can show: an easier item that needed help, a harder one that was solved.
+     */
+    maxItemGap: 4,
     /** Mastery a skill is seeded with when placement ends. */
     seedMastery: 30,
   },

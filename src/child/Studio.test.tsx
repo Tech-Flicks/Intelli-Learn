@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import type { JSX } from 'react';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ChildProfile } from '@/core/types';
 import { setLocale } from '@/i18n';
+import { ChildArea } from './index';
+import { buildIdea } from './studioIdeas';
 import { voiceMock } from './testing/voiceMock';
 import { addChild, freshDevice, renderChildArea, useUpToday } from './testSupport';
 
@@ -59,7 +63,41 @@ describe('Imagination Studio: building an idea without typing', () => {
     expect(target.startsWith(`play:/kids/${mia.id}/play?`)).toBe(true);
     const query = new URLSearchParams(target.slice(target.indexOf('?')));
     expect(query.get('mode')).toBe('studio');
-    expect(query.get('idea')).toBe('A robot baking cookies on the moon');
+    // The picture idea travels as chip ids, not as text: nothing typed can ride along.
+    expect(query.get('pick')).toBe('robot.baking.moon');
+    expect(query.get('idea')).toBeNull();
+  });
+
+  it('opens the play screen once when "Make it!" is tapped twice, so one press on Back comes back here', async () => {
+    const mia = await addChild({ nickname: 'Mia' });
+    function PlayStandIn(): JSX.Element {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(-1)}>
+          Back from play
+        </button>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={[`/kids/${mia.id}/studio`]}>
+        <Routes>
+          <Route path="/kids/:childId/play" element={<PlayStandIn />} />
+          <Route path="/kids/*" element={<ChildArea />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'Imagination Studio' });
+    await userEvent.click(screen.getByRole('button', { name: 'Dragon' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Bake' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Moon' }));
+    // Both taps land before the screen has changed.
+    const button = makeIt();
+    act(() => {
+      button.click();
+      button.click();
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Back from play' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Imagination Studio' })).toBeInTheDocument();
   });
 
   it('takes a row back when its picture is tapped again', async () => {
@@ -88,7 +126,10 @@ describe('Imagination Studio: building an idea without typing', () => {
     expect(document.querySelectorAll('[data-chip][aria-pressed="true"]')).toHaveLength(3);
     await userEvent.click(makeIt());
     const target = (await screen.findByTestId('elsewhere')).textContent ?? '';
-    expect(new URLSearchParams(target.slice(target.indexOf('?'))).get('idea')).toBe(sentence);
+    const query = new URLSearchParams(target.slice(target.indexOf('?')));
+    expect(query.get('idea')).toBeNull();
+    const [character, action, place] = (query.get('pick') ?? '').split('.');
+    expect(buildIdea({ character: character ?? null, action: action ?? null, place: place ?? null })).toBe(sentence);
   });
 
   it('builds the sentence in the interface language', async () => {

@@ -164,21 +164,33 @@ export function ChallengeStage(props: ChallengeStageProps): JSX.Element {
           className={cx('flex min-w-0 flex-col gap-4 rounded-3xl p-1 transition-shadow', nudged && 'ring-4 ring-sun-400')}
         >
           {widget}
-          <motion.button
-            type="button"
-            whileTap={canCheck ? { scale: 0.97 } : undefined}
-            disabled={!canCheck}
-            onClick={submit}
-            className={cx(
-              'flex min-h-16 w-full items-center justify-center gap-2 rounded-3xl px-6 text-2xl font-extrabold shadow-md transition-colors',
-              canCheck ? 'bg-leaf-600 text-white hover:bg-leaf-600/90' : 'bg-brand-100 text-ink-500',
-              FOCUS_RING,
-            )}
-            data-testid="check-button"
+          {/*
+            Check stays in view at the bottom of the screen while the answer area is on it: with a
+            long answer area (cards to order, sort or match on a phone) a child does not have to
+            scroll past the cards to find it. At the end of the page it sits in its own place.
+            The page around the stage may keep room free at the bar's right end by setting
+            `--stage-check-inset` (the play screen does, for its floating helper).
+          */}
+          <div
+            data-check-bar=""
+            className="sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))] z-10 pr-[var(--stage-check-inset,0px)] transition-[padding] duration-200 motion-reduce:transition-none"
           >
-            <span aria-hidden="true">✔</span>
-            {text.check}
-          </motion.button>
+            <motion.button
+              type="button"
+              whileTap={canCheck ? { scale: 0.97 } : undefined}
+              disabled={!canCheck}
+              onClick={submit}
+              className={cx(
+                'flex min-h-16 w-full items-center justify-center gap-2 rounded-3xl px-6 text-2xl font-extrabold shadow-md ring-4 ring-white/90 transition-colors',
+                canCheck ? 'bg-leaf-600 text-white hover:bg-leaf-600/90' : 'bg-brand-100 text-ink-500',
+                FOCUS_RING,
+              )}
+              data-testid="check-button"
+            >
+              <span aria-hidden="true">✔</span>
+              {text.check}
+            </motion.button>
+          </div>
         </motion.div>
       </div>
     </MotionConfig>

@@ -58,8 +58,18 @@ export const PLAY = {
   historyTurns: 6,
   /** Helper lines kept on screen for one challenge. */
   messagesKept: 40,
-  /** How long the local wrong-answer line stands in before the tutor's wording is given up on. */
+  /** How long the local wrong-answer line stands in alone before it is said without the tutor's wording. */
   feedbackWaitMs: 1200,
+  /** The tutor's wording is still added when it arrives within this time and nothing newer was said (a real model needs 1 to 5 seconds). */
+  lateFeedbackMs: 6000,
+  /**
+   * How long a child who asked for a hint or a walkthrough step waits for the tutor's own wording.
+   * After that the request is given up and the hint of the challenge itself is shown (a real model
+   * needs 1 to 5 seconds; a slow one must not leave the child looking at a thinking face).
+   */
+  helpWaitMs: 4000,
+  /** The same wrong answer again within this time is a double tap on Check: one try, not two. */
+  doubleSubmitMs: 800,
   /** Scene objects that glow for one helper line. */
   maxHighlights: 3,
   /** Slow and normal speaking rates of the speed control. */
@@ -85,10 +95,16 @@ export type PlayPhase =
 export interface PlayRequest {
   mode?: Mode;
   strand?: Strand;
+  /** Imagination Studio: the idea the child typed or said. Only honoured while open chat is on (see supply.ts). */
   idea?: string;
+  /** Imagination Studio: the picture idea, as the ids of its three chips ("dragon.baking.moon"). Never free text. */
+  pick?: string;
 }
 
-/** Reads `mode`, `strand` and `idea` from the query string. Unknown values are dropped. */
+/** Three chip ids joined by dots: lower-case letters only, so no sentence fits in here. */
+const PICK_PATTERN = /^[a-z]{1,24}\.[a-z]{1,24}\.[a-z]{1,24}$/;
+
+/** Reads `mode`, `strand`, `idea` and `pick` from the query string. Unknown values are dropped. */
 export function parseRequest(params: { get(name: string): string | null }): PlayRequest {
   const request: PlayRequest = {};
   const mode = params.get('mode');
@@ -97,6 +113,8 @@ export function parseRequest(params: { get(name: string): string | null }): Play
   if (strand !== null && (STRANDS as readonly string[]).includes(strand)) request.strand = strand as Strand;
   const idea = params.get('idea')?.replace(/\s+/g, ' ').trim() ?? '';
   if (request.mode === 'studio' && idea !== '') request.idea = Array.from(idea).slice(0, 80).join('');
+  const pick = params.get('pick') ?? '';
+  if (request.mode === 'studio' && PICK_PATTERN.test(pick)) request.pick = pick;
   return request;
 }
 
@@ -142,6 +160,26 @@ export function answerEvent(answer: Answer, result: CheckResult, at: number): An
 export function withAnswer(run: Run, event: AnswerEvent): Run {
   if (isSolved(run)) return run;
   return { ...run, answers: [...run.answers, event] };
+}
+
+/** An answer as text that is the same for the same answer: the keys of a sort or match answer in a fixed order. */
+function answerKey(answer: unknown): string {
+  if (typeof answer !== 'object' || answer === null || Array.isArray(answer)) return JSON.stringify(answer) ?? '';
+  const record = answer as Record<string, unknown>;
+  return JSON.stringify(Object.keys(record).sort().map((key) => [key, record[key]]));
+}
+
+/**
+ * True when `answer` is the latest wrong answer once more, given right after it: a child's double
+ * tap on Check. That is one wrong try, not two. It must not cost the stars of a second try, and
+ * two honest mistakes must not look like the rapid tapping that opens the break. The same answer
+ * after a pause, or any other answer, is a new try.
+ */
+export function isRepeatedSubmit(run: Pick<Run, 'answers'>, answer: unknown, at: number): boolean {
+  const last = run.answers[run.answers.length - 1];
+  if (!last || last.correct) return false;
+  const since = at - last.at;
+  return since >= 0 && since < PLAY.doubleSubmitMs && answerKey(last.answer) === answerKey(answer);
 }
 
 /**
@@ -192,7 +230,10 @@ export function outcomeOfRun(run: Pick<Run, 'answers' | 'hintsUsed' | 'walkthrou
   return 'independent';
 }
 
-/** A concept check counts as passed only when the child needed no help. */
+/**
+ * A concept check counts as passed only when the child needed no help. Pass the credited outcome
+ * (`creditedOutcome` in `@/progression`), so that an answer found by trying the options does not count.
+ */
 export function checkPassed(purpose: ItemPurpose, outcome: AttemptOutcome): boolean {
   return purpose === 'check' && (outcome === 'independent' || outcome === 'second-try');
 }

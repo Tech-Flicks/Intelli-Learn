@@ -234,6 +234,37 @@ describe('sessions', () => {
     expect(await db.sessions.get(session.id)).toMatchObject({ endedAt: at(10, 5), activeMs: 30_000 });
   });
 
+  it('keeps counting play time after a second tab opened a session for the same child', async () => {
+    const child = await addChild({ controlsOverride: { allowedStartHour: 0, allowedEndHour: 24, dailyMinutes: 30 } });
+    const tabA = await startSession(child.id, at(10));
+    // The play screen is opened in a second tab, which is then left in the background.
+    const tabB = await startSession(child.id, at(10, 1));
+    expect((await db.sessions.get(tabA.id))?.endedAt).not.toBeNull();
+
+    // The child goes on playing in the first tab: 100 minutes of ticks.
+    for (let i = 1; i <= 400; i += 1) expect(await tickSession(tabA.id, 15_000, at(10, 1) + i * 15_000)).toBe(true);
+
+    const allowance = await getPlayAllowance(child.id, at(11, 45));
+    expect(allowance.minutesUsedToday).toBe(100);
+    expect(allowance).toMatchObject({ allowed: false, reason: 'daily-limit', minutesLeft: 0 });
+    // The time went to the session that is open, not into a closed record.
+    expect((await db.sessions.get(tabB.id))?.activeMs).toBe(100 * MIN);
+    expect((await db.sessions.get(tabA.id))?.activeMs).toBe(0);
+  });
+
+  it('says so when a tick could not be counted, so the caller can open a new session', async () => {
+    const session = await startSession('c1', at(10));
+    expect(await tickSession(session.id, 15_000, at(10) + 15_000)).toBe(true);
+    await endSession(session.id, at(10, 5));
+    expect(await tickSession(session.id, 15_000, at(10, 6))).toBe(false);
+    expect(await tickSession('missing', 15_000, at(10, 6))).toBe(false);
+    expect(await tickSession(session.id, 0, at(10, 6))).toBe(false);
+    // Another child's open session is never credited.
+    await startSession('c2', at(10, 7));
+    expect(await tickSession(session.id, 15_000, at(10, 8))).toBe(false);
+    expect((await db.sessions.where('childId').equals('c2').first())?.activeMs).toBe(0);
+  });
+
   it('closes a session that was left open when a new one starts', async () => {
     const stale = await startSession('c1', at(8));
     await tickSession(stale.id, 40_000, at(8) + 40_000);

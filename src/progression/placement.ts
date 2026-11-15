@@ -5,7 +5,7 @@
  * Eight items rotate over the enabled strands. Each strand has an estimate
  * that starts a little below the enrolled grade and moves after every
  * placement item: up fast when the child solves alone, down fast when the
- * walkthrough was needed. The estimates between items live in `db.kv`, one
+ * walkthrough was needed, and at most two grades either way. The estimates between items live in `db.kv`, one
  * record per child. When the eighth item is done, the skills that were
  * actually attempted are seeded at their strand's estimate.
  */
@@ -29,6 +29,8 @@ export interface PlacementNote {
   skillId: string;
   strand: Strand;
   interaction: InteractionKind;
+  /** The stage the item was pitched at. Missing in a record that was stored before this was kept. */
+  stage?: StageValue;
 }
 
 export interface PlacementState {
@@ -100,11 +102,22 @@ export function applyPlacementAttempt(
   note: PlacementNote,
   outcome: AttemptOutcome,
 ): PlacementState {
+  const { steps, maxMove, maxItemGap } = TUNING.placement;
   const before = estimateFor(state, grade, note.strand);
-  const after = clampToStrand(note.strand, before + TUNING.placement.steps[outcome]);
+  const start = state.start[note.strand] ?? before;
+  let move = steps[outcome];
+  // A skill that does not exist at the estimate's grade is asked at its nearest grade. Solving an
+  // item from far below the estimate shows nothing about a higher level, and needing help on one
+  // from far above shows nothing about a lower one.
+  const asked = note.stage ?? before;
+  if ((move > 0 && asked < before - maxItemGap) || (move < 0 && asked > before + maxItemGap)) move = 0;
+  // Eight items can place a child up to two grades from the start, not further: with one subject
+  // switched on, all eight go to the same strand.
+  const bounded = Math.max(start - maxMove, Math.min(start + maxMove, before + move));
+  const after = clampToStrand(note.strand, bounded);
   return {
     v: 1,
-    start: { ...state.start, [note.strand]: state.start[note.strand] ?? before },
+    start: { ...state.start, [note.strand]: start },
     estimates: { ...state.estimates, [note.strand]: after },
     answered: state.answered + 1,
     attempted: [...state.attempted, note],
@@ -175,7 +188,9 @@ export function parsePlacement(value: unknown): PlacementState | null {
     return (
       typeof n.skillId === 'string' &&
       (STRANDS as readonly unknown[]).includes(n.strand) &&
-      (INTERACTION_KINDS as readonly unknown[]).includes(n.interaction)
+      (INTERACTION_KINDS as readonly unknown[]).includes(n.interaction) &&
+      (n.stage === undefined ||
+        (typeof n.stage === 'number' && Number.isInteger(n.stage) && n.stage >= MIN_STAGE && n.stage <= MAX_STAGE))
     );
   });
   return notesOk ? (value as PlacementState) : null;

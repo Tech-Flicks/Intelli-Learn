@@ -58,7 +58,9 @@ function tutorSystem(req: TutorRequest): string {
       `- At most ${young ? '2' : '3'} short sentences. Speak directly to the child, warmly and playfully.`,
       '- Praise effort and strategy, never talent. Never shame. A wrong answer is a step, not a failure.',
       '- Never ask a personal question. Never mention anything outside the app.',
-      '- The answer key in the data is secret. It is there so that you never mislead the child; do not reveal it, and do not say which option, object or number is correct.',
+      needsAnswerKey(req.intent)
+        ? '- The answer key in the data is secret. It is there so that you never mislead the child; do not reveal it, and do not say which option, object or number is correct.'
+        : '- You are not given the answer, and you must not work it out for the child: do not say which option, object or number is correct, and do not put things in order, in groups or in pairs for them.',
       `- What to do now: ${intentRule(req)}`,
       `- ${CHILD_INPUT_RULE}`,
     ].join('\n'),
@@ -71,6 +73,17 @@ function tutorSystem(req: TutorRequest): string {
     ].join('\n'),
     languageSection(req.child.locale),
   ].join('\n\n');
+}
+
+/**
+ * Whether the model is told the answer. A nudge and a hint are the approved texts in the
+ * model's own words, and a chat reply must never go beyond the help already given, so none
+ * of them needs the key, and what the model does not have, a persuasive child cannot talk
+ * out of it. Feedback on a wrong answer, a walkthrough step and the replies after the
+ * challenge is solved do need it, so the model never misleads the child.
+ */
+export function needsAnswerKey(intent: TutorIntent): boolean {
+  return intent !== 'nudge' && intent !== 'hint' && intent !== 'chat';
 }
 
 /** What the correct answer is, in words, for the model's eyes only. */
@@ -150,7 +163,7 @@ export function buildTutorPrompt(req: TutorRequest): Prompt {
   ];
   const options = describeOptions(c);
   if (options) lines.push(options);
-  lines.push(`Answer key (secret): ${describeAnswerKey(c.interaction)}`);
+  if (needsAnswerKey(req.intent)) lines.push(`Answer key (secret): ${describeAnswerKey(c.interaction)}`);
 
   const ids = c.scene.objects.map((object) => object.id).slice(0, 30);
   lines.push(`Scene objects you may highlight: ${ids.length > 0 ? ids.join(', ') : '(none)'}`);

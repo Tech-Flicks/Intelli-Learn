@@ -14,6 +14,9 @@ import { ShelfScreen } from './Shelf';
 import { StudioScreen } from './Studio';
 import './strings';
 
+/** For the play module: the studio's own sentence for three chip ids (null when one is not a chip). */
+export { buildIdea } from './studioIdeas';
+
 /** Loads the profile for every screen under `/kids/:childId`. An unknown id goes back to the picker. */
 function ChildLayout() {
   const { childId } = useParams();

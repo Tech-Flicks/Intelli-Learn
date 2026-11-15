@@ -4,6 +4,7 @@
  * that works on the values as typed, and the request budgets.
  *
  * A stored API key is only ever shown as "saved". It can be replaced or removed, never read.
+ * It belongs to the service it was entered for: for another address the form asks for a key.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { testConnection } from '@/ai';
@@ -27,6 +28,8 @@ export interface AiConnectionFormProps {
   errors?: AiErrors;
   /** A usable key is already stored on this device (settings screen). */
   hasStoredKey: boolean;
+  /** A key is stored, but for another service than the address in the draft: it is not used here. */
+  keyForOtherAddress?: boolean;
   disabled?: boolean;
   /** Extra content under the budget fields (the usage meters in settings). */
   children?: ReactNode;
@@ -41,7 +44,15 @@ interface TestState {
 
 const IDLE: TestState = { status: 'idle', ok: false, message: '', latencyMs: 0 };
 
-export function AiConnectionForm({ draft, onChange, errors = {}, hasStoredKey, disabled = false, children }: AiConnectionFormProps) {
+export function AiConnectionForm({
+  draft,
+  onChange,
+  errors = {},
+  hasStoredKey,
+  keyForOtherAddress = false,
+  disabled = false,
+  children,
+}: AiConnectionFormProps) {
   const fmt = useFormat();
   const { t } = fmt;
   const [test, setTest] = useState<TestState>(IDLE);
@@ -166,6 +177,11 @@ export function AiConnectionForm({ draft, onChange, errors = {}, hasStoredKey, d
                   {t('parent.ai.keyRemove')}
                 </Button>
               </div>
+            </div>
+          )}
+          {keyForOtherAddress && !draft.removeKey && (
+            <div data-testid="key-other-address" className="-mt-3">
+              <Note tone="warning">{t('parent.ai.keyOtherAddress')}</Note>
             </div>
           )}
           {hasStoredKey && (replacing || draft.removeKey) && (

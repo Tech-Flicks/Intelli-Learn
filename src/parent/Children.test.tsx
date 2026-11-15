@@ -143,6 +143,27 @@ describe('children', () => {
     expect(await db.challenges.get('ch-mia')).toBeDefined();
   });
 
+  it('keeps a card with a long nickname inside its column on a phone', async () => {
+    // jsdom lays nothing out. Measured in a browser at 360 px: without these the card grew to 428 px and the page scrolled sideways.
+    await addChild({ nickname: 'Bartholomew-Benjamin' });
+    renderParent('/parent/children');
+    const progress = await screen.findByRole('link', { name: /Bartholomew-Benjamin.s progress/ });
+    // The card is a grid item: it may be narrower than its content.
+    expect(progress.closest('li')?.className).toMatch(/\bmin-w-0\b/);
+    // The buttons wrap below each other, and the long name wraps inside its button.
+    expect(progress.parentElement?.className).toMatch(/\bflex-wrap\b/);
+    for (const cls of ['min-w-0', 'flex-auto', 'wrap-anywhere', 'text-center']) expect(progress.className.split(' ')).toContain(cls);
+    expect(screen.getByRole('link', { name: 'Edit profile' }).className.split(' ')).toContain('min-w-0');
+  });
+
+  it('keeps the overview card with a long nickname inside its column on a phone', async () => {
+    await addChild({ nickname: 'Bartholomew-Benjamin' });
+    renderParent('/parent');
+    const open = await screen.findByRole('link', { name: /Bartholomew-Benjamin.s details/ });
+    expect(open.closest('article')?.className).toMatch(/\bmin-w-0\b/);
+    for (const cls of ['min-w-0', 'w-full', 'wrap-anywhere', 'text-center']) expect(open.className.split(' ')).toContain(cls);
+  });
+
   it('goes back to the list when a child does not exist', async () => {
     renderParent('/parent/child/nobody');
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/parent/children'));

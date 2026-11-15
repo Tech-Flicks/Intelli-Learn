@@ -13,8 +13,8 @@ import type {
 } from '@/core/types';
 import { createChild, db, exportBackup, getSettings, parseBackup, recordUsage, updateSettings } from '@/data';
 import { generateChallenge, generateImage, generateStoryOutline, remixChallenge } from '@/ai';
-import { rateLibraryItem, saveToLibrary } from '@/library';
-import { pickOfflineChallenge, pickOfflineStory } from '@/offline';
+import { fingerprintOf, rateLibraryItem, saveToLibrary, setRetired } from '@/library';
+import { pickOfflineChallenge, pickOfflineStory, pickOwnSkillChallenge } from '@/offline';
 import { planNext, placementStatus, recordAttempt, seededRng } from '@/progression';
 import {
   advanceStory,
@@ -24,6 +24,7 @@ import {
   prepareConceptCheck,
   resetSupply,
   setSupplyDeps,
+  SUPPLY,
   startStory,
   supplyIdle,
   takeNext,
@@ -512,24 +513,80 @@ describe('takeNext: resume and the queue', () => {
     expect((await takeNext(child.id)).id).toBe(math.id);
   });
 
-  it('leaves an active challenge of another mode active and returns it on the next plain request', async () => {
+  it('gives an unfinished challenge back whatever mode is asked for, and the mode once it is finished', async () => {
     const child = await addChild();
     const quest = await takeNext(child.id);
     await supplyIdle();
     expect(quest.mode).not.toBe('robot');
 
+    // Opening another mode is not a way around the unfinished one: nothing new is started.
+    for (const mode of ['robot', 'story', 'studio', 'experiment'] as const) {
+      expect((await takeNext(child.id, { mode })).id, mode).toBe(quest.id);
+      await supplyIdle();
+    }
+    expect((await takeNext(child.id, { mode: 'studio', pick: 'dragon.baking.moon' })).id).toBe(quest.id);
+    await supplyIdle();
+    expect((await rowsOf(child.id, 'active')).map((row) => row.id)).toEqual([quest.id]);
+    expect(await db.stories.count()).toBe(0);
+
+    await complete(quest);
     const robot = await takeNext(child.id, { mode: 'robot' });
     await supplyIdle();
     expect(robot.id).not.toBe(quest.id);
     expect(robot.mode).toBe('robot');
     expect(robot.interaction).toBe('robot');
-    expect((await db.challenges.get(quest.id))?.status).toBe('active');
-
-    expect((await takeNext(child.id, { mode: 'robot' })).id).toBe(robot.id);
-    // No mode: the one that was started first comes back.
-    expect((await takeNext(child.id)).id).toBe(quest.id);
-    await complete(quest);
+    // And the robot challenge is the unfinished one now, also for a plain request.
     expect((await takeNext(child.id)).id).toBe(robot.id);
+  });
+
+  it('gives an unfinished challenge back whatever world is opened, so no challenge is ever set aside', async () => {
+    const child = await addChild();
+    await putState(child.id, ADDITION);
+    await putState(child.id, WEATHER);
+    const math = await putRow(child.id, { skillId: ADDITION });
+    const science = await putRow(child.id, { skillId: WEATHER, strand: 'science', interaction: 'choice' });
+
+    expect((await takeNext(child.id, { strand: 'math' })).id).toBe(math.id);
+    // The science world, the engineering world, a mode: the maths challenge is still the one to finish.
+    expect((await takeNext(child.id, { strand: 'science' })).id).toBe(math.id);
+    expect((await takeNext(child.id, { strand: 'engineering' })).id).toBe(math.id);
+    expect((await takeNext(child.id, { mode: 'robot', strand: 'technology' })).id).toBe(math.id);
+    expect((await db.challenges.get(science.id))?.status).toBe('queued');
+    expect(await rowsOf(child.id, 'active')).toHaveLength(1);
+
+    await complete(math);
+    expect((await takeNext(child.id, { strand: 'science' })).id).toBe(science.id);
+  });
+
+  it('gives an unfinished concept check back whatever world or mode is opened', async () => {
+    const child = await addChild();
+    await putState(child.id, ADDITION, { checkPending: true });
+    const check = await putRow(child.id, { skillId: ADDITION, purpose: 'check' });
+    expect((await takeNext(child.id)).id).toBe(check.id);
+    await supplyIdle();
+    for (const opts of [{ strand: 'science' }, { mode: 'robot' }, { mode: 'story' }, { mode: 'studio', pick: 'dragon.baking.moon' }] as const) {
+      expect((await takeNext(child.id, opts)).id, JSON.stringify(opts)).toBe(check.id);
+      await supplyIdle();
+    }
+    expect(await rowsOf(child.id, 'active')).toHaveLength(1);
+  });
+
+  it('with several unfinished challenges from before, serves the one that fits first and then the oldest', async () => {
+    const child = await addChild();
+    const math = await putRow(child.id, { skillId: ADDITION, status: 'active', startedAt: tick() });
+    const robot = await putRow(child.id, {
+      skillId: 'technology-sequencing',
+      strand: 'technology',
+      interaction: 'robot',
+      mode: 'robot',
+      status: 'active',
+      startedAt: tick(),
+    });
+    expect((await takeNext(child.id, { mode: 'robot' })).id).toBe(robot.id);
+    expect((await takeNext(child.id, { strand: 'science' })).id).toBe(math.id);
+    expect((await takeNext(child.id)).id).toBe(math.id);
+    await complete(math);
+    expect((await takeNext(child.id, { strand: 'science' })).id).toBe(robot.id);
   });
 
   it('treats "quest" as ordinary play, and a mission as ordinary play while missions are off', async () => {
@@ -625,6 +682,179 @@ describe('takeNext: stale queue items', () => {
     expect((await takeNext(child.id)).id).toBe(active.id);
     await supplyIdle();
     expect((await db.challenges.get(active.id))?.status).toBe('active');
+  });
+});
+
+describe('content rules of the child who gets the challenge', () => {
+  /** The same canvas with a word that 'standard' allows and 'strict' does not. */
+  function spooky(content: Challenge, word = 'ghost'): Challenge {
+    return ChallengeSchema.parse({ ...content, intro: `A friendly ${word} needs your help.` });
+  }
+
+  it('checks a tier-2 word the way the test expects', () => {
+    expect(realAi.localSafetyCheck('A friendly ghost needs your help.', 'standard').safe).toBe(true);
+    expect(realAi.localSafetyCheck('A friendly ghost needs your help.', 'strict').safe).toBe(false);
+  });
+
+  it('does not reuse a library item made under "standard" for a child on "strict"', async () => {
+    await setControls({ strictness: 'strict' });
+    const child = await addChild();
+    alwaysPlan();
+    // Built for a sibling whose own setting is "standard", and approved under it.
+    const item = await libraryItem({ theme: 'robots' });
+    await db.library.update(item.id, { content: spooky(item.content) });
+
+    const taken = await takeNext(child.id);
+    expect(taken.libraryId).not.toBe(item.id);
+    expect(taken.source).not.toBe('reused');
+    expect(JSON.stringify(taken.content)).not.toContain('ghost');
+    expect(await db.library.get(item.id)).toMatchObject({ seenBy: [], uses: 0 });
+  });
+
+  it('still reuses that item for a child whose setting is "standard"', async () => {
+    await setControls({ strictness: 'strict' });
+    const child = await addChild({ controlsOverride: { strictness: 'standard' } });
+    alwaysPlan();
+    const item = await libraryItem({ theme: 'robots' });
+    await db.library.update(item.id, { content: spooky(item.content) });
+    expect(await takeNext(child.id)).toMatchObject({ source: 'reused', libraryId: item.id });
+  });
+
+  it('passes over an unsuitable item to a suitable one further down the list', async () => {
+    await setControls({ strictness: 'strict' });
+    const child = await addChild();
+    alwaysPlan();
+    const fine = await libraryItem({ theme: 'robots' });
+    const spookyItem = await libraryItem({ theme: 'robots' });
+    await db.library.update(spookyItem.id, { content: spooky(spookyItem.content), rating: 5 });
+    expect(await takeNext(child.id)).toMatchObject({ source: 'reused', libraryId: fine.id });
+  });
+
+  it('does not send an unsuitable item to be remixed either', async () => {
+    await setControls({ strictness: 'strict' });
+    const child = await addChild();
+    alwaysPlan();
+    const item = await libraryItem({ theme: 'dinosaurs' });
+    await db.library.update(item.id, { content: spooky(item.content) });
+    await takeNext(child.id);
+    expect(remix).not.toHaveBeenCalled();
+  });
+
+  it('throws away queued and unfinished challenges that no longer pass after strictness is turned up', async () => {
+    await setControls({ strictness: 'standard' });
+    const child = await addChild();
+    await putState(child.id, ADDITION);
+    const queued = await putRow(child.id, { skillId: ADDITION });
+    await db.challenges.update(queued.id, { content: spooky(queued.content, 'zombie') });
+    const active = await putRow(child.id, { skillId: ADDITION, status: 'active', startedAt: T0 });
+    await db.challenges.update(active.id, { content: spooky(active.content) });
+    await db.kv.put({ key: `play:run:${active.id}:${child.id}`, value: { v: 1, answers: [], hintsUsed: 1, walkthroughUsed: false, activeMs: 0 } });
+    const fine = await putRow(child.id, { skillId: ADDITION });
+
+    // Under "standard" the unfinished one simply comes back.
+    expect((await takeNext(child.id)).id).toBe(active.id);
+    await supplyIdle();
+
+    await setControls({ strictness: 'strict' });
+    const taken = await takeNext(child.id);
+    expect(taken.id).toBe(fine.id);
+    expect((await db.challenges.get(active.id))?.status).toBe('discarded');
+    expect((await db.challenges.get(queued.id))?.status).toBe('discarded');
+    expect(await db.kv.get(`play:run:${active.id}:${child.id}`)).toBeUndefined();
+  });
+});
+
+describe('a canvas the parent took out of circulation', () => {
+  it('is not served from the queue it was already waiting in after a 1 or 2 star rating', async () => {
+    const child = await addChild();
+    await putState(child.id, ADDITION);
+    const item = await libraryItem({ theme: 'space' });
+    const reused = await putRow(child.id, { source: 'reused', libraryId: item.id, content: item.content });
+    const fine = await putRow(child.id);
+
+    await rateLibraryItem(item.id, 1, 'wrong answer key');
+    expect(await db.challenges.get(reused.id)).toMatchObject({ status: 'queued', parentRating: 1 });
+
+    const taken = await takeNext(child.id);
+    expect(taken.id).toBe(fine.id);
+    expect((await db.challenges.get(reused.id))?.status).toBe('discarded');
+  });
+
+  it('is not served from the queue after it was retired without a rating', async () => {
+    const child = await addChild();
+    await putState(child.id, ADDITION);
+    const item = await libraryItem({ theme: 'space' });
+    const built = await putRow(child.id, { source: 'ai', libraryId: item.id, content: item.content });
+    const fine = await putRow(child.id);
+
+    await setRetired(item.id, true);
+    expect((await takeNext(child.id)).id).toBe(fine.id);
+    expect((await db.challenges.get(built.id))?.status).toBe('discarded');
+  });
+
+  it('does not come back as the unfinished challenge either, and its saved run is removed', async () => {
+    const child = await addChild();
+    await putState(child.id, ADDITION);
+    const item = await libraryItem({ theme: 'space' });
+    const active = await putRow(child.id, { source: 'reused', libraryId: item.id, content: item.content, status: 'active', startedAt: T0 });
+    await db.kv.put({ key: `play:run:${active.id}:${child.id}`, value: { v: 1, answers: [], hintsUsed: 0, walkthroughUsed: false, activeMs: 5 } });
+    const fine = await putRow(child.id);
+    expect((await takeNext(child.id)).id).toBe(active.id);
+    await supplyIdle();
+
+    await rateLibraryItem(item.id, 2, 'the picture does not match the question');
+    expect((await takeNext(child.id)).id).toBe(fine.id);
+    expect((await db.challenges.get(active.id))?.status).toBe('discarded');
+    expect(await db.kv.get(`play:run:${active.id}:${child.id}`)).toBeUndefined();
+  });
+
+  it('keeps serving a canvas that was rated 3 stars or more', async () => {
+    const child = await addChild();
+    await putState(child.id, ADDITION);
+    const item = await libraryItem({ theme: 'space' });
+    const reused = await putRow(child.id, { source: 'reused', libraryId: item.id, content: item.content });
+    await rateLibraryItem(item.id, 3, 'fine');
+    expect((await takeNext(child.id)).id).toBe(reused.id);
+  });
+});
+
+describe('an unfinished challenge after the parent switched its kind off', () => {
+  it('does not bring back an unfinished mission once real-world missions are off', async () => {
+    const child = await addChild();
+    const mission = await takeNext(child.id, { mode: 'mission' });
+    await supplyIdle();
+    expect(mission.mode).toBe('mission');
+    await db.kv.put({ key: `play:run:${mission.id}:${child.id}`, value: { v: 1, answers: [], hintsUsed: 0, walkthroughUsed: false, activeMs: 5 } });
+
+    await setControls({ realWorldMissions: false });
+    const next = await takeNext(child.id);
+    await supplyIdle();
+    expect(next.id).not.toBe(mission.id);
+    expect(next.mode).not.toBe('mission');
+    expect((await db.challenges.get(mission.id))?.status).toBe('discarded');
+    expect(await db.kv.get(`play:run:${mission.id}:${child.id}`)).toBeUndefined();
+    expect((await rowsOf(child.id)).filter((row) => row.status === 'active' || row.status === 'queued').every((row) => row.mode !== 'mission')).toBe(true);
+  });
+
+  it('does not bring back an unfinished challenge of a subject that was switched off', async () => {
+    const child = await addChild();
+    const science = await takeNext(child.id, { strand: 'science' });
+    await supplyIdle();
+    expect(science.strand).toBe('science');
+
+    await setControls({ strands: { math: true, science: false, technology: true, engineering: true, logic: true } });
+    const next = await takeNext(child.id);
+    expect(next.id).not.toBe(science.id);
+    expect(next.strand).not.toBe('science');
+    expect((await db.challenges.get(science.id))?.status).toBe('discarded');
+  });
+
+  it('keeps an unfinished challenge when every subject is switched off (none counts as off then)', async () => {
+    const child = await addChild();
+    const first = await takeNext(child.id);
+    await supplyIdle();
+    await setControls({ strands: { math: false, science: false, technology: false, engineering: false, logic: false } });
+    expect((await takeNext(child.id)).id).toBe(first.id);
   });
 });
 
@@ -895,6 +1125,121 @@ describe('concept checks', () => {
   });
 });
 
+describe('a concept check without the AI', () => {
+  const DEDUCTION = 'logic-deduction';
+
+  beforeEach(() => {
+    aiSource = 'offline';
+  });
+
+  it('comes in another kind when the bank has nothing about the skill in the planned kind', async () => {
+    const child = await addChild({ grade: '3' });
+    await putState(child.id, DEDUCTION, { stage: makeStage('3', 'growing'), checkPending: true, mastery: 90, recentInteractions: ['choice', 'match'] });
+    // The bank has no ordering task about deduction: its wide search would hand out a neighbour's sequence.
+    const plan = fixedPlan(child.id, { skillId: DEDUCTION, strand: 'logic', stage: makeStage('3', 'growing'), interaction: 'order', purpose: 'check' });
+    expect(pickOwnSkillChallenge(plan, { seed: 2 })).toBeNull();
+    plan$.mockImplementation(async () => [plan]);
+
+    const taken = await takeNext(child.id);
+    expect(taken).toMatchObject({ purpose: 'check', skillId: DEDUCTION, source: 'offline' });
+    expect(taken.interaction).not.toBe('order');
+    expect(pickOwnSkillChallenge({ ...plan, interaction: taken.interaction }, { seed: 2 })).not.toBeNull();
+  });
+
+  it('is never a challenge the child has solved before', async () => {
+    const child = await addChild({ grade: '1' });
+    const stage = makeStage('1', 'growing');
+    const LIVING = 'science-living-things';
+    await putState(child.id, LIVING, { stage, checkPending: true, mastery: 90, recentInteractions: ['choice'] });
+    const plan = fixedPlan(child.id, { skillId: LIVING, strand: 'science', stage, interaction: 'order', purpose: 'check' });
+    // The child has solved every ordering task the bank can make about the skill at this grade.
+    const prints = new Set<string>();
+    for (let seed = 1; seed <= 60; seed += 1) {
+      const content = pickOwnSkillChallenge(plan, { seed });
+      if (!content || prints.has(fingerprintOf(content))) continue;
+      prints.add(fingerprintOf(content));
+      await putRow(child.id, { skillId: LIVING, strand: 'science', stage, interaction: 'order', content, status: 'completed', completedAt: T0 + seed });
+    }
+    expect(prints.size).toBeGreaterThan(0);
+    plan$.mockImplementation(async () => [plan]);
+
+    const taken = await takeNext(child.id);
+    expect(taken).toMatchObject({ purpose: 'check', skillId: LIVING });
+    expect(prints.has(fingerprintOf(taken.content))).toBe(false);
+  });
+
+  it('is not served at all when there is nothing new about the skill: the planner is told, and the child goes on', async () => {
+    const child = await addChild();
+    // A skill the bank knows nothing about (it left the skill map): no check can be made for it.
+    const GONE = 'math-roman-numerals';
+    const check = fixedPlan(child.id, { skillId: GONE, purpose: 'check', interaction: 'choice' });
+    const practice = fixedPlan(child.id, { skillId: ADDITION, purpose: 'core' });
+    plan$.mockImplementation(async (_childId, _count, opts) => [opts?.withoutChecks?.includes(GONE) ? practice : check]);
+
+    const taken = await takeNext(child.id);
+    expect(taken).toMatchObject({ purpose: 'core', skillId: ADDITION });
+    expect(plan$.mock.calls.at(-1)?.[2]?.withoutChecks).toEqual([GONE]);
+    expect((await rowsOf(child.id)).some((row) => row.skillId === GONE)).toBe(false);
+    await supplyIdle();
+
+    // Preparing the check ahead of time finds nothing either, and queues nothing in its place.
+    await db.skillStates.put({ ...(await putState(child.id, ADDITION)), id: `${child.id}:${GONE}`, skillId: GONE, checkPending: true });
+    plan$.mockImplementation(async () => [check]);
+    const before = (await rowsOf(child.id)).length;
+    await prepareConceptCheck(child.id, GONE);
+    expect((await rowsOf(child.id)).length).toBe(before);
+  });
+
+  it('tries again later, in case an AI was connected or new content arrived', async () => {
+    const child = await addChild();
+    const GONE = 'math-roman-numerals';
+    const check = fixedPlan(child.id, { skillId: GONE, purpose: 'check', interaction: 'choice' });
+    const practice = fixedPlan(child.id, { skillId: ADDITION, purpose: 'core' });
+    plan$.mockImplementation(async (_childId, _count, opts) => [opts?.withoutChecks?.includes(GONE) ? practice : check]);
+    const first = await takeNext(child.id);
+    await supplyIdle();
+    await complete(first);
+    for (const row of await rowsOf(child.id, 'queued')) await db.challenges.update(row.id, { status: 'discarded' });
+
+    clock += SUPPLY.checkRetryMs;
+    aiSource = 'ai';
+    const later = await takeNext(child.id);
+    expect(later).toMatchObject({ purpose: 'check', skillId: GONE, source: 'ai' });
+  });
+
+  it('never leaves the child without a challenge, even if the planner insists on the check', async () => {
+    const child = await addChild();
+    alwaysPlan({ skillId: 'math-roman-numerals', purpose: 'check', interaction: 'choice' });
+    const taken = await takeNext(child.id);
+    expect(taken.status).toBe('active');
+    expect(taken.purpose).toBe('core');
+  });
+});
+
+describe('practice without the AI', () => {
+  beforeEach(() => {
+    aiSource = 'offline';
+  });
+
+  it('is about the planned skill, in another kind when the bank has nothing in the planned one', async () => {
+    const child = await addChild({ grade: '3' });
+    const plan = fixedPlan(child.id, { skillId: 'logic-deduction', strand: 'logic', stage: makeStage('3', 'growing'), interaction: 'order' });
+    plan$.mockImplementation(async () => [plan]);
+    const taken = await takeNext(child.id);
+    expect(taken.skillId).toBe('logic-deduction');
+    expect(taken.interaction).not.toBe('order');
+    expect(pickOwnSkillChallenge({ ...plan, interaction: taken.interaction }, { seed: 2 })).not.toBeNull();
+  });
+
+  it('keeps the planned kind for the easier follow-up after a walkthrough', async () => {
+    const child = await addChild({ grade: '3' });
+    const previous = await putRow(child.id, { skillId: 'logic-deduction', strand: 'logic', stage: makeStage('3', 'growing'), interaction: 'order', status: 'completed', completedAt: T0 });
+    plan$.mockImplementation(realProgression.planNext);
+    const sibling = await makeSibling(previous);
+    expect(sibling).toMatchObject({ purpose: 'sibling', interaction: 'order' });
+  });
+});
+
 describe('makeSibling', () => {
   it('builds an easier follow-up from the previous question and queues it', async () => {
     const child = await addChild();
@@ -1104,7 +1449,11 @@ describe('Story Quest', () => {
   });
 });
 
-describe('Imagination Studio', () => {
+describe('Imagination Studio: a typed idea (open chat on)', () => {
+  beforeEach(async () => {
+    await setControls({ openChat: true });
+  });
+
   it('passes a harmless idea on, tidied and cut to 80 characters', async () => {
     const child = await addChild();
     const canvas = await takeNext(child.id, { mode: 'studio', idea: '  a purple   dragon\nwho bakes bread  ' });
@@ -1158,6 +1507,72 @@ describe('Imagination Studio', () => {
     const again = await takeNext(child.id, { mode: 'studio', idea: 'something else' });
     expect(again.id).toBe(canvas.id);
     expect(generate).not.toHaveBeenCalled();
+  });
+});
+
+describe('Imagination Studio: with open chat switched off', () => {
+  it('never passes free text from the address on to the AI', async () => {
+    const child = await addChild();
+    expect((await getSettings()).controls.openChat).toBe(false);
+    const canvas = await takeNext(child.id, { mode: 'studio', idea: 'my name is Sam Lee from Oak Street' });
+    expect(canvas.mode).toBe('studio');
+    const request = generate.mock.calls[0]?.[0];
+    expect(request?.studioIdea).toBe('space');
+    expect(JSON.stringify(request)).not.toContain('Sam Lee');
+    expect(JSON.stringify(request)).not.toContain('Oak Street');
+  });
+
+  it('honours the per-child setting', async () => {
+    await setControls({ openChat: true });
+    const child = await addChild({ controlsOverride: { openChat: false } });
+    await takeNext(child.id, { mode: 'studio', idea: 'a purple dragon' });
+    expect(generate.mock.calls[0]?.[0].studioIdea).toBe('space');
+  });
+
+  it('draws a picture idea: the three chips become the app\'s own sentence', async () => {
+    const child = await addChild();
+    const canvas = await takeNext(child.id, { mode: 'studio', pick: 'dragon.baking.moon' });
+    expect(canvas.mode).toBe('studio');
+    expect(generate.mock.calls[0]?.[0].studioIdea).toBe('A dragon baking cookies on the moon');
+    expect(JSON.stringify(generate.mock.calls[0]?.[0].plan)).not.toContain('dragon');
+  });
+
+  it('draws the first interest for chips that do not exist', async () => {
+    const child = await addChild();
+    for (const pick of ['dragon.baking.nowhere', 'sam.lee.oakstreet', 'dragon.baking', '']) {
+      await supplyIdle();
+      generate.mockClear();
+      const canvas = await takeNext(child.id, { mode: 'studio', pick });
+      expect(generate.mock.calls[0]?.[0].studioIdea, pick).toBe('space');
+      expect(JSON.stringify(generate.mock.calls[0]?.[0])).not.toContain('oakstreet');
+      await complete(canvas);
+    }
+  });
+
+  it('a typed idea wins over chips only when open chat is on', async () => {
+    const child = await addChild();
+    const canvas = await takeNext(child.id, { mode: 'studio', idea: 'a tiny whale', pick: 'robot.painting.jungle' });
+    expect(generate.mock.calls[0]?.[0].studioIdea).toBe('A robot painting rainbows in a jungle');
+    await complete(canvas);
+    await supplyIdle();
+    await setControls({ openChat: true });
+    generate.mockClear();
+    await takeNext(child.id, { mode: 'studio', idea: 'a tiny whale', pick: 'robot.painting.jungle' });
+    expect(generate.mock.calls[0]?.[0].studioIdea).toBe('a tiny whale');
+  });
+});
+
+describe('creative modes before the first adventure is finished', () => {
+  it('serves the placement challenge whatever mode the address asks for', async () => {
+    await setControls({ openChat: true });
+    const child = await addChild({ placementDone: false });
+    for (const mode of ['studio', 'robot', 'mission', 'story'] as const) {
+      const taken = await takeNext(child.id, { mode, idea: 'a purple dragon' });
+      expect(taken.purpose, mode).toBe('placement');
+      expect(taken.mode, mode).not.toBe(mode);
+    }
+    expect(JSON.stringify(generate.mock.calls)).not.toContain('purple dragon');
+    expect(await db.stories.count()).toBe(0);
   });
 });
 
@@ -1225,6 +1640,83 @@ describe('a whole journey with the real AI module in demo mode', () => {
     const backup = await exportBackup();
     expect(() => parseBackup(JSON.parse(JSON.stringify(backup)))).not.toThrow();
   });
+
+  it.each(['robot', 'invention', 'detective'] as const)(
+    'a child who only ever plays %s mode still gets concept checks and moves up',
+    async (mode) => {
+      const child = await addChild({ grade: '3' });
+      const purposes: string[] = [];
+      const checks: ChallengeRecord[] = [];
+      for (let turn = 0; turn < 40; turn += 1) {
+        const record = await takeNext(child.id, { mode });
+        purposes.push(record.purpose);
+        if (record.purpose === 'check') checks.push(record);
+        const result = await recordAttempt({
+          challenge: record,
+          answers: [{ at: tick(), answer: null, correct: true, misconception: null }],
+          hintsUsed: 0,
+          walkthroughUsed: false,
+          teachBackCorrect: null,
+          timeMs: 20_000,
+          now: tick(),
+        });
+        // What the play session does after every recorded challenge.
+        if (result.skillState.checkPending) await prepareConceptCheck(child.id, record.skillId);
+        if (turn % 2 === 0) await supplyIdle();
+      }
+      await supplyIdle();
+      expect(checks.length).toBeGreaterThan(0);
+      const ups = await db.stageChanges.where('childId').equals(child.id).filter((change) => change.skillId !== null && change.to > change.from).count();
+      expect(ups).toBeGreaterThan(0);
+      // The rest of the session stays in the mode the child chose.
+      const practice = (await rowsOf(child.id, 'completed')).filter((row) => row.purpose !== 'check' && row.purpose !== 'sibling');
+      expect(practice.every((row) => row.mode === mode)).toBe(true);
+      if (mode === 'robot' || mode === 'invention') {
+        // These modes have one format only: the check has to come in another one.
+        const kind = mode === 'robot' ? 'robot' : 'build';
+        expect(checks.every((row) => row.interaction !== kind)).toBe(true);
+      }
+    },
+    60_000,
+  );
+
+  it('never serves a concept check the child has already solved, or one about another skill', async () => {
+    const child = await addChild({ grade: '3' });
+    const solved = new Set<string>();
+    const checks: ChallengeRecord[] = [];
+    let repeats = 0;
+    for (let turn = 0; turn < 150; turn += 1) {
+      const record = await takeNext(child.id);
+      const print = fingerprintOf(record.content);
+      if (solved.has(print)) {
+        repeats += 1;
+        // A check that repeats a solved challenge would raise a stage for remembering an answer.
+        expect(record.purpose).not.toBe('check');
+      }
+      solved.add(print);
+      if (record.purpose === 'check') checks.push(record);
+      const result = await recordAttempt({
+        challenge: record,
+        answers: [{ at: tick(), answer: null, correct: true, misconception: null }],
+        hintsUsed: 0,
+        walkthroughUsed: false,
+        teachBackCorrect: null,
+        timeMs: 20_000,
+        now: tick(),
+      });
+      if (result.skillState.checkPending) await prepareConceptCheck(child.id, record.skillId);
+      if (turn % 3 === 0) await supplyIdle();
+    }
+    await supplyIdle();
+    expect(checks.length).toBeGreaterThan(15);
+    // Practice hardly ever repeats either.
+    expect(repeats).toBeLessThan(8);
+    // Every check is content the bank holds for that very skill, in the kind it was served in.
+    for (const check of checks) {
+      const plan: ChallengePlan = { childId: child.id, skillId: check.skillId, strand: check.strand, stage: check.stage, interaction: check.interaction, mode: check.mode, purpose: 'check', theme: check.theme };
+      expect(pickOwnSkillChallenge(plan, { seed: 1 }), `${check.skillId} ${check.interaction}`).not.toBeNull();
+    }
+  }, 60_000);
 
   it('plays a whole story with the built-in tales', async () => {
     const child = await addChild();

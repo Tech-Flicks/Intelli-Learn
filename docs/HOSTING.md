@@ -91,7 +91,6 @@ In `.env`:
 SITE_ADDRESS=192.168.1.50
 CADDY_TLS=internal
 WEB_BIND=127.0.0.1          # optional: plain HTTP for this computer only
-TRUSTED_PROXY_HOPS=2        # only matters if you also use the AI proxy
 ```
 
 ```bash
@@ -221,14 +220,49 @@ What the proxy does and does not do:
 the image model if you enabled AI pictures, and the provider's moderation
 model if it requires one to be named.
 
-If devices reach the app through Caddy, set `TRUSTED_PROXY_HOPS=2` so the rate
-limit counts each device separately (1 = nginx only, the default).
+The rate limit counts each device separately, with or without Caddy: nginx in
+the web container works out the device's address and passes that one value to
+the proxy. Leave `TRUSTED_PROXY_HOPS` at `1`. (Caddy talks to the web container
+on port 8081, which is not published; there nginx takes the address Caddy
+reports. On the published port 8080 nginx ignores any `X-Forwarded-For` a
+client sends, so a made-up address cannot be used to get around the limit.)
+
+If you put your own reverse proxy in front of port 8080 instead of using the
+`https` profile, every device behind it counts as one address. Raise
+`RATE_LIMIT_PER_MINUTE` to fit, and do not raise `TRUSTED_PROXY_HOPS`: with a
+higher number the proxy would believe an address the device can write itself.
 
 ## 6. Local models: Ollama and LM Studio
 
 Any server that speaks the OpenAI chat completions format works. The model has
 to be able to return JSON reliably; small models often struggle with that, and
 the app then falls back to its built-in challenges.
+
+### Give the model room: context length and time
+
+A challenge request is long (the rules, the child's level, the JSON format),
+and the answer is a JSON object of several hundred words. Two defaults of
+local servers get in the way:
+
+- **Context length.** Ollama cuts every request to its default context
+  (4096 tokens in many versions) without an error, so the model never sees the
+  end of the instructions and answers with something else. Start it with at
+  least 8192: `OLLAMA_CONTEXT_LENGTH=8192 ollama serve` (or set the variable
+  for the service or the app, as with `OLLAMA_ORIGINS` below). In LM Studio set
+  "Context Length" to 8192 or more when you load the model.
+- **Time.** On a computer without a fast graphics card a challenge takes 20 to
+  90 seconds, and the first request also loads the model. The app waits up to
+  180 seconds for a model on this computer (direct mode) and 90 seconds through
+  the proxy (the proxy's own limit); for a service on the internet it is 45
+  seconds. A child never waits that long: after 8 seconds a built-in challenge
+  is shown and the AI challenge is kept for later.
+
+For a local address the app asks for a simpler picture (fewer objects, no
+drawings), which shortens the answer. When the model still cannot do it, the
+parent area shows why under **Settings > AI > Last AI results** (for example
+"the answer was cut off" or "not valid JSON"), and after three failed
+challenges in a row the app stops asking for 10 minutes instead of using up the
+request budget.
 
 ### Recommended: through the AI proxy
 
@@ -362,8 +396,8 @@ changed the `Host` header. Make it pass the header through, or list the
 address people type in `ALLOWED_ORIGINS` (for example `https://learn.example.com`).
 
 **HTTP 429 from the proxy.** More than `RATE_LIMIT_PER_MINUTE` requests came
-from one address. If every device is limited together, check
-`TRUSTED_PROXY_HOPS`.
+from one address. If every device is limited together, they reach the app
+through a reverse proxy of your own (section 5): raise `RATE_LIMIT_PER_MINUTE`.
 
 **Direct mode with Ollama fails with a network or CORS error.** Set
 `OLLAMA_ORIGINS` to the app's exact address (section 6), or use the proxy.

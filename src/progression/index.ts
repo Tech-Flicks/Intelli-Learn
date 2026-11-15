@@ -7,12 +7,12 @@ export { TUNING } from './tuning';
 export { setRng, seededRng } from './rng';
 export type { Rng } from './rng';
 
-export { outcomeOf, detectFrustration } from './outcome';
+export { answerSpace, creditedOutcome, outcomeOf, detectFrustration, wrongTries } from './outcome';
 
 export { recordAttempt } from './record';
-export type { RecordAttemptInput } from './record';
+export type { RecordAttemptInput, RecordedAttempt } from './record';
 
-export { planNext, makeSiblingPlan, FALLBACK_THEMES } from './plan';
+export { planNext, makeSiblingPlan, kindsFor, FALLBACK_THEMES } from './plan';
 export type { PlanOptions } from './plan';
 
 export { placementStatus } from './placement';

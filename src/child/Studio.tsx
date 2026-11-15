@@ -5,7 +5,7 @@
  * (and the microphone) is offered only when the parent switched open chat (and the
  * microphone) on, and a typed idea is checked before it goes anywhere.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { usePipMood } from '@/bot/pip';
@@ -22,6 +22,7 @@ import {
   checkTypedIdea,
   clipIdea,
   ideaEmoji,
+  isCompleteIdea,
   pickSurprises,
   type IdeaChoice,
   type IdeaRow,
@@ -64,6 +65,8 @@ export function StudioScreen() {
   const [unsafe, setUnsafe] = useState(false);
   const [micProblem, setMicProblem] = useState<MicProblem | null>(null);
   const [surprises] = useState(() => pickSurprises(3));
+  // "Make it!" opens the play screen once: a double tap must not put it into the history twice (Back would need two presses).
+  const leaving = useRef(false);
 
   const built = buildIdea(choice);
   const ownIdea = canType ? typed.replace(/\s+/g, ' ').trim() : '';
@@ -106,6 +109,7 @@ export function StudioScreen() {
   };
 
   const make = () => {
+    if (leaving.current) return;
     let finished: string | null = built;
     if (ownIdea !== '') {
       const result = checkTypedIdea(ownIdea, controls.strictness);
@@ -117,7 +121,15 @@ export function StudioScreen() {
       finished = result.idea;
     }
     if (finished === null) return;
-    navigate(`${base}/play?mode=studio&idea=${encodeURIComponent(finished)}`);
+    // A picture idea travels as its three chip ids and the play module builds the sentence
+    // again, so free text is only ever in the address when the child really typed it (which
+    // needs open chat; the play module checks that too).
+    const query =
+      ownIdea === '' && isCompleteIdea(choice)
+        ? `pick=${choice.character}.${choice.action}.${choice.place}`
+        : `idea=${encodeURIComponent(finished)}`;
+    leaving.current = true;
+    navigate(`${base}/play?mode=studio&${query}`);
   };
 
   const toggleMic = async () => {

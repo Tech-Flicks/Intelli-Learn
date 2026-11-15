@@ -57,8 +57,9 @@ function catSets(ctx: Ctx): CatSet[] {
         { label: 'Has corners', emoji: '⬜', one: 'a thing with corners', many: 'things with corners', rule: 'These things have pointy corners.', items: [{ label: 'box', emoji: '📦' }, { label: 'door', emoji: '🚪' }, { label: 'book', emoji: '📕' }, { label: 'letter', emoji: '✉️' }, { label: 'gift', emoji: '🎁' }] },
       ],
     });
-    const small = g === 0 ? [1, 2, 3] : [1, 2, 3, 4];
-    const big = g === 0 ? [8, 9, 10] : [6, 7, 8, 9];
+    // Pre-K counts to 5: small and big are the two ends of that, with 3 left out as neither.
+    const small = g === 0 ? [1, 2] : [1, 2, 3, 4];
+    const big = g === 0 ? [4, 5] : [6, 7, 8, 9];
     out.push(
       twoBins(ctx, 'smallbig', cmp, 'Numbers', 'Some numbers are small.', 'Count up from one.', 'Small numbers come first when you count.', ['Which numbers come first when you count?', 'The small ones.', 'The big ones.', 'The red ones.'],
         { label: 'Small', emoji: '🐜', one: 'a small number', many: 'small numbers', rule: 'Small numbers come first when you count.', items: small.map(num) },

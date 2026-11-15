@@ -245,6 +245,58 @@ describe('concept checks', () => {
   });
 });
 
+describe('moving up faster when a child is clearly above the level', () => {
+  const checkAfterRun = (streakBefore: number, outcome: AttemptOutcome = 'independent', patch: Partial<SkillState> = {}) =>
+    applyAttempt(
+      fresh({ mastery: 75, checkPending: true, independentStreak: streakBefore, ...patch }),
+      ADDITION,
+      event(outcome, { purpose: 'check' }),
+    );
+
+  it('moves one step while the run of independent solves is short', () => {
+    expect(checkAfterRun(M.accelerateStreak - 2).state.stage).toBe(13);
+  });
+
+  it('moves two steps when the check completes a run of five independent solves', () => {
+    const update = checkAfterRun(M.accelerateStreak - 1);
+    expect(update.stageChange).toEqual({ from: 12, to: 12 + M.accelerateSteps, reason: 'mastery' });
+    expect(update.state).toMatchObject({ stage: 14, mastery: M.afterStepUp, checksPassed: 1, checkPending: false });
+  });
+
+  it('moves a whole grade when the check completes a run of eight', () => {
+    const update = checkAfterRun(M.leapStreak - 1);
+    expect(update.stageChange).toEqual({ from: 12, to: 12 + M.leapSteps, reason: 'mastery' });
+    expect(update.state.stage).toBe(makeStage('3', 'starting'));
+  });
+
+  it('only for a check that was solved at the first try', () => {
+    // A second try ends the run, so the check moves the skill one step.
+    expect(checkAfterRun(M.leapStreak, 'second-try').state.stage).toBe(13);
+  });
+
+  it('never moves past the top of the skill', () => {
+    const top = makeStage('4', 'ready');
+    const update = checkAfterRun(M.leapStreak, 'independent', { stage: top - 1 });
+    expect(update.state.stage).toBe(top);
+  });
+
+  it('a child who solves everything alone climbs a grade on a skill in about a dozen items', () => {
+    let state = fresh({ mastery: TUNING.placement.seedMastery });
+    let items = 0;
+    while (state.stage < makeStage('3', 'starting') && items < 100) {
+      state = applyAttempt(state, ADDITION, event('independent', { purpose: state.checkPending ? 'check' : 'core' })).state;
+      items += 1;
+    }
+    expect(items).toBeLessThanOrEqual(12);
+    // ... and from then on a grade with every passed check.
+    const from = state.stage;
+    for (let i = 0; i < 3; i += 1) {
+      state = applyAttempt(state, ADDITION, event('independent', { purpose: state.checkPending ? 'check' : 'core' })).state;
+    }
+    expect(state.stage).toBe(from + M.leapSteps);
+  });
+});
+
 describe('needing a lot of support', () => {
   it('moves down one step after three walkthroughs in a row', () => {
     const updates = run(fresh({ mastery: 30 }), ['walkthrough', 'walkthrough', 'walkthrough']);
@@ -362,6 +414,39 @@ describe('aggregateStrandStage', () => {
       stateFor('c1', MULTIPLICATION.id, 20, { attempts: 10 }),
     ];
     expect(aggregateStrandStage(states, 'math').stage).toBe(15);
+  });
+
+  it('is not pulled down by a skill that ended at a lower grade', () => {
+    // Counting ends at grade 2, addition at grade 4, place value at grade 6; the others go on to grade 8.
+    const ended: [string, number][] = [
+      ['math-counting-cardinality', makeStage('2', 'ready')],
+      ['math-addition-subtraction', makeStage('4', 'ready')],
+      ['math-place-value', makeStage('6', 'ready')],
+    ];
+    const live = ['math-multiplication-division', 'math-fractions-decimals', 'math-geometry-shapes', 'math-measurement-data', 'math-algebra-ratios'];
+    const at = (stage: number) => [
+      ...ended.map(([id, top]) => stateFor('c1', id, top)),
+      ...live.map((id) => stateFor('c1', id, stage)),
+    ];
+    expect(aggregateStrandStage(at(makeStage('7', 'ready')), 'math')).toEqual({ stage: makeStage('7', 'ready'), practisedSkills: 8 });
+    expect(aggregateStrandStage(at(makeStage('7', 'growing')), 'math').stage).toBe(makeStage('7', 'growing'));
+    expect(aggregateStrandStage(at(makeStage('8', 'ready')), 'math').stage).toBe(makeStage('8', 'ready'));
+  });
+
+  it('still counts a finished skill that is above the skills that are climbing', () => {
+    const states = [
+      stateFor('c1', 'math-counting-cardinality', makeStage('2', 'ready'), { attempts: 4 }),
+      stateFor('c1', MULTIPLICATION.id, makeStage('2', 'starting'), { attempts: 4 }),
+    ];
+    // (15 + 12) / 2 = 13.5
+    expect(aggregateStrandStage(states, 'math').stage).toBe(14);
+  });
+
+  it('is the level of the finished skills when nothing else was practised', () => {
+    const counting = stateFor('c1', 'math-counting-cardinality', makeStage('2', 'ready'));
+    expect(aggregateStrandStage([counting], 'math').stage).toBe(makeStage('2', 'ready'));
+    const addition = stateFor('c1', ADDITION.id, makeStage('4', 'ready'));
+    expect(aggregateStrandStage([counting, addition], 'math').stage).toBe(makeStage('4', 'ready'));
   });
 
   it('only looks at the given strand', () => {

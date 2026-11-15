@@ -17,7 +17,7 @@ import { LOCALE_NAMES, gradeName, setLocale, useT } from '@/i18n';
 import { cryptoAvailable, hasApiKey, INSECURE_CONTEXT_MESSAGE, setAdminPassword, setApiKey, useParentGate } from '@/security';
 import { Button, cx, Field, PasswordInput, Select, Spinner, useReducedMotion } from '@/ui';
 import { AiConnectionForm } from './forms/AiConnectionForm';
-import { aiDraftOf, aiSettingsOf, draftHasImageModel, validateAiDraft, type AiDraft, type AiErrors } from './forms/aiForm';
+import { aiDraftOf, aiSettingsOf, draftBaseUrl, draftHasImageModel, validateAiDraft, type AiDraft, type AiErrors } from './forms/aiForm';
 import { ChildForm, childDraftToInput, emptyChildDraft, validateChildDraft, type ChildDraft, type ChildDraftErrors } from './forms/ChildForm';
 import { ControlsForm, validateControls, type ControlsErrors } from './forms/ControlsForm';
 import { validateNewPassword, type NewPasswordErrors } from './forms/password';
@@ -102,6 +102,9 @@ interface Finished {
   dailyMinutes: number;
 }
 
+/** How many wizards are mounted. React StrictMode mounts, unmounts and mounts again. */
+let mountedWizards = 0;
+
 function WizardBody({ initial }: { initial: Settings }) {
   const t = useT();
   const navigate = useNavigate();
@@ -125,6 +128,24 @@ function WizardBody({ initial }: { initial: Settings }) {
   const [finished, setFinished] = useState<Finished | null>(null);
   /** A child created by an earlier, interrupted finish: never create a second one. */
   const createdChild = useRef<ChildProfile | null>(null);
+  /** True once this wizard unlocked the gate (at the end of `finish`). */
+  const unlockedHere = useRef(false);
+  /** True when the parent chose "Open parent area": the one way out that keeps the gate open. */
+  const toParentArea = useRef(false);
+
+  // The gate is unlocked on the last step so the parent can walk straight into the parent
+  // area. Any other way out of the wizard (the browser or device back button, a typed
+  // address) must lock it again: the parent shell, which normally does that, is not mounted
+  // here. The check waits a tick so a StrictMode remount does not lock.
+  useEffect(() => {
+    mountedWizards += 1;
+    return () => {
+      mountedWizards -= 1;
+      queueMicrotask(() => {
+        if (mountedWizards === 0 && unlockedHere.current && !toParentArea.current) useParentGate.getState().lock();
+      });
+    };
+  }, []);
 
   const secure = cryptoAvailable();
   const index = STEPS.indexOf(step);
@@ -168,13 +189,14 @@ function WizardBody({ initial }: { initial: Settings }) {
         contentLocale,
       }));
       const typedKey = aiDraft.apiKey.trim();
-      if (aiDraft.provider === 'direct' && typedKey !== '') await setApiKey(typedKey);
+      if (aiDraft.provider === 'direct' && typedKey !== '') await setApiKey(typedKey, draftBaseUrl(aiDraft));
       else if (await hasApiKey()) await setApiKey(null);
       const child = createdChild.current ?? (await createChild(childDraftToInput(childDraft)));
       createdChild.current = child;
       // The very last write: from here on the app counts as set up.
       await updateSettings({ setupComplete: true });
       resetAiSession();
+      unlockedHere.current = true;
       await useParentGate.getState().unlock(password);
       setFinished({ child, provider: aiDraft.provider, dailyMinutes: savedControls.dailyMinutes });
       setPassword('');
@@ -388,7 +410,15 @@ function WizardBody({ initial }: { initial: Settings }) {
           >
             {t('parent.wizard.done.play')}
           </Button>
-          <Button size="lg" variant="secondary" fullWidth onClick={() => navigate('/parent')}>
+          <Button
+            size="lg"
+            variant="secondary"
+            fullWidth
+            onClick={() => {
+              toParentArea.current = true;
+              navigate('/parent');
+            }}
+          >
             {t('parent.wizard.done.parentArea')}
           </Button>
         </div>

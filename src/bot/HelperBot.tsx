@@ -31,7 +31,7 @@ import { db } from '@/data';
 import { useT } from '@/i18n';
 import { PLAY, canWalkthrough, usePlaySession, type BotMessage } from '@/play';
 import { BigButton, IconButton, cx, useReducedMotion } from '@/ui';
-import { listenOnce, stopListening, useListening, useSpeaking, voiceSupport } from '@/voice';
+import { cancelListening, listenOnce, stopListening, useListening, useSpeaking, voiceSupport } from '@/voice';
 import {
   BOT,
   anchorBox,
@@ -46,6 +46,9 @@ import {
   parseStoredPosition,
   pipStateFor,
   positionKey,
+  restInset,
+  restPoint,
+  restsLow,
   toFraction,
   type Fraction,
   type Insets,
@@ -149,6 +152,7 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
       hintsUsed: s.hintsUsed,
       walkthroughUsed: s.walkthroughUsed,
       walkthroughOpen: s.walkthroughOpen,
+      breakOpen: s.breakOpen,
     })),
   );
   const { phase, botLine, botLineId, botOffer, controls } = session;
@@ -184,12 +188,81 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
   }, [childId]);
 
   const dock = useMemo(() => dockPoint(bounds, size, room.columnRight), [bounds, size, room.columnRight]);
-  const point = dragPoint ?? (fraction ? fromFraction(fraction, bounds) : dock);
   const docked = fraction === null && dragPoint === null;
+
+  // --- the panel (its state is needed for where Pip is) -----------------------------------
+  const [open, setOpenState] = useState(false);
+  const narrow = panelIsSheet(room.viewport);
+
+  // Every sheet that comes up from the bottom (the solved moment, the walkthrough, the break,
+  // and on a phone Pip's own panel) is sized to end below Pip's home. While one is open he is
+  // at home, wherever he was put: he is never under a sheet or on top of its button.
+  const sheetOpen =
+    phase === 'solved' || phase === 'teachback' || phase === 'recorded' || session.walkthroughOpen || session.breakOpen || (open && narrow);
+
+  // At home, and the question card has scrolled away: Pip rests next to Check, where the Check
+  // bar keeps room for him. Up at the top he would cover the answer area scrolling past.
+  // Where the Check bar is while he rests next to it, or null while he is in his seat.
+  const [resting, setResting] = useState<{ top: number; height: number } | null>(null);
+  const mayRest = docked && !sheetOpen && session.challengeId !== null && loaded;
   useEffect(() => {
-    usePlaySession.getState().setBotDocked(docked);
-  }, [docked]);
+    if (!mayRest) {
+      setResting(null);
+      return;
+    }
+    let frame = 0;
+    const boxOf = (selector: string): DOMRect | null => {
+      const box = document.querySelector(selector)?.getBoundingClientRect();
+      // Nothing there, or not laid out: nothing to go by.
+      return box && box.width > 0 && box.height > 0 ? box : null;
+    };
+    const measure = () => {
+      frame = 0;
+      const check = boxOf('[data-check-bar]');
+      const input = { seatTop: boxOf('[data-bot-seat]')?.top ?? null, dockY: dock.y, checkTop: check?.top ?? null, viewportHeight: room.viewport.height };
+      setResting((current) => {
+        if (!check || !restsLow(input, current !== null)) return null;
+        const next = { top: Math.round(check.top), height: Math.round(check.height) };
+        return current !== null && current.top === next.top && current.height === next.height ? current : next;
+      });
+    };
+    const schedule = () => {
+      if (frame === 0) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    // Scroll events do not bubble; capturing on the document hears the page's own scroller.
+    document.addEventListener('scroll', schedule, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener('scroll', schedule, { capture: true });
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
+  }, [mayRest, dock.y, room.viewport.height, session.challengeId, phase]);
+
+  const low = mayRest && resting !== null;
+  const home = low ? restPoint(bounds, size, room.columnRight, resting) : dock;
+  // He glides from his seat to Check and back; while he goes along with the Check bar he keeps up with it.
+  const wasLow = useRef(false);
+  const keepingUp = low && wasLow.current;
+  useEffect(() => {
+    wasLow.current = low;
+  }, [low]);
+  const point = sheetOpen ? dock : (dragPoint ?? (fraction ? fromFraction(fraction, bounds) : home));
+  // His seat in the question card is kept while he is at home, also when a sheet sent him there.
+  const seated = docked || sheetOpen;
+  useEffect(() => {
+    usePlaySession.getState().setBotDocked(seated);
+  }, [seated]);
   useEffect(() => () => usePlaySession.getState().setBotDocked(true), []);
+  const inset = low ? restInset(size) : 0;
+  useEffect(() => {
+    if (usePlaySession.getState().botInset !== inset) usePlaySession.getState().setBotInset(inset);
+  }, [inset]);
+  useEffect(
+    () => () => {
+      if (usePlaySession.getState().botInset !== 0) usePlaySession.getState().setBotInset(0);
+    },
+    [],
+  );
 
   /** Remembers where Pip was put. Dropped close to home (`snap`), he goes home. */
   const place = useCallback(
@@ -229,7 +302,6 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
   }, [session.wiggle, calm, wiggle]);
 
   // --- the panel ------------------------------------------------------------------
-  const [open, setOpenState] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -279,6 +351,8 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
   const onPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     skipClick.current = false;
+    // While a sheet is open Pip stays at home: a press is a tap.
+    if (sheetOpen) return;
     drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: point, moved: false };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
@@ -320,7 +394,7 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
     };
     if (event.key === 'Home') {
       event.preventDefault();
-      place('home', false);
+      if (!sheetOpen) place('home', false);
       return;
     }
     if (event.key === 'Escape' && open) {
@@ -331,6 +405,7 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
     const move = moves[event.key];
     if (!move) return;
     event.preventDefault();
+    if (sheetOpen) return;
     // No snapping here: a short step away from home has to leave home.
     place({ x: point.x + move.x, y: point.y + move.y }, false);
   };
@@ -347,8 +422,28 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
   // answer column): touching the page puts a plain line away, so it never stays on top of what
   // the child wants to use. (An offer stays until it is answered; every line is kept in the
   // panel's conversation.)
-  const narrow = panelIsSheet(room.viewport);
   const bubbleRef = useRef<HTMLDivElement>(null);
+  // A long line (a hint may have 300 letters) does not make the bubble grow over the question and
+  // the answers: the text has a limited height and scrolls inside, and an arrow says there is more.
+  const lineRef = useRef<HTMLParagraphElement>(null);
+  const [lineMore, setLineMore] = useState(false);
+  const measureLine = useCallback(() => {
+    const el = lineRef.current;
+    setLineMore(el !== null && el.scrollHeight - el.clientHeight - el.scrollTop > 8);
+  }, []);
+  useLayoutEffect(() => {
+    measureLine();
+  }, [measureLine, bubbleShown, botLine, botLineId]);
+  useEffect(() => {
+    if (!bubbleShown) return;
+    window.addEventListener('resize', measureLine);
+    return () => window.removeEventListener('resize', measureLine);
+  }, [bubbleShown, measureLine]);
+  const readOn = () => {
+    const el = lineRef.current;
+    if (!el) return;
+    el.scrollBy({ top: Math.max(48, el.clientHeight - 32), behavior: calm ? 'auto' : 'smooth' });
+  };
   useEffect(() => {
     if (!bubbleShown || botOffer !== null) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -368,16 +463,44 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
   const micOn = controls?.microphone === true && voiceSupport().stt;
   const chatOn = controls?.openChat === true;
 
+  /** The recording that is running: its number while the microphone is open for the panel, else 0. */
+  const recording = useRef(0);
+  const recordings = useRef(0);
+
   const listen = useCallback(async () => {
     setMicNote(null);
+    recordings.current += 1;
+    const mine = recordings.current;
+    recording.current = mine;
     try {
       const heard = await listenOnce();
+      // The panel was closed in the meantime: nothing that was said after that is passed on.
+      if (recording.current !== mine) return;
+      recording.current = 0;
       await usePlaySession.getState().askBot(heard);
     } catch (error) {
+      if (recording.current !== mine) return;
+      recording.current = 0;
       const code = error instanceof Error ? error.message : '';
       setMicNote(code === 'denied' || code === 'unsupported' ? 'bot.mic.denied' : 'bot.mic.again');
     }
   }, []);
+
+  /**
+   * The microphone is only open while its button is on screen. When the panel closes (the X,
+   * a tap outside it, a new challenge) or Pip leaves the screen, a recording that is still
+   * running ends at once and its transcript is dropped.
+   */
+  const releaseMic = useCallback(() => {
+    if (recording.current === 0) return;
+    recording.current = 0;
+    press.current = { at: 0, started: false };
+    cancelListening();
+  }, []);
+  useEffect(() => {
+    if (!open) releaseMic();
+  }, [open, releaseMic]);
+  useEffect(() => releaseMic, [releaseMic]);
 
   const onMicDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
@@ -386,6 +509,12 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
       press.current = { at: 0, started: false };
       stopListening();
       return;
+    }
+    // Hold to talk: the release must reach this button also when the pointer left it.
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // No capture (an old browser, a pointer that is already gone): the release over the button still works.
     }
     press.current = { at: Date.now(), started: true };
     void listen();
@@ -430,13 +559,15 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
       <div ref={probeRef} aria-hidden="true" className="pointer-events-none invisible fixed inset-0" style={PROBE_STYLE} />
 
       <motion.div
-        className="fixed z-40"
+        // Between his seat and his place next to Check he glides; under a finger he follows at once.
+        className={cx('fixed z-40', dragPoint === null && !calm && !keepingUp && 'transition-[left,top] duration-300 ease-out')}
         style={{ left: point.x, top: point.y, width: size, height: size }}
         initial={calm ? false : { scale: 0.3, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: 'spring', stiffness: 380, damping: 20 }}
         data-testid="helper-bot"
         data-docked={docked ? 'true' : 'false'}
+        data-spot={sheetOpen ? 'seat' : !docked ? 'free' : low ? 'check' : 'seat'}
       >
         <motion.div animate={wiggle} className="h-full w-full">
           <button
@@ -494,10 +625,29 @@ export function HelperBot({ childId }: { childId: string }): JSX.Element | null 
               )}
               style={{ left: bubbleBox.tailLeft - 8 }}
             />
-            <div className="flex items-start gap-1">
-              <p role="status" className="min-w-0 flex-1 break-words py-1 text-lg font-bold leading-snug">
+            <div className="relative flex items-start gap-1">
+              <p
+                ref={lineRef}
+                role="status"
+                onScroll={measureLine}
+                className="max-h-[max(9rem,30dvh)] min-w-0 flex-1 overflow-y-auto overscroll-contain break-words py-1 text-lg font-bold leading-snug"
+              >
                 {botLine}
               </p>
+              {lineMore && (
+                <>
+                  <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-white to-white/0" />
+                  <button
+                    type="button"
+                    data-line-more=""
+                    aria-label={t('bot.line.more')}
+                    onClick={readOn}
+                    className="absolute -right-2 -bottom-2 flex h-11 w-11 items-center justify-center rounded-full border-2 border-brand-300 bg-white text-xl font-bold text-brand-700 shadow-card"
+                  >
+                    <span aria-hidden="true">↓</span>
+                  </button>
+                </>
+              )}
               <IconButton
                 aria-label={t('bot.line.close')}
                 size="lg"

@@ -26,6 +26,7 @@ import type {
   ChallengeRecord,
   ChallengeSource,
   ChildProfile,
+  InteractionKind,
   Mode,
   ParentalControls,
   Settings,
@@ -38,6 +39,7 @@ import {
   generateChallenge,
   generateImage,
   generateStoryOutline,
+  localChallengeSafety,
   localSafetyCheck,
   remixChallenge,
   type ChildContext,
@@ -45,9 +47,9 @@ import {
   type GradeExpectation,
   type StoryChapterContext,
 } from '@/ai';
-import { avoidNotesFor, findReusable, markSeen, markServed, saveToLibrary } from '@/library';
-import { pickOfflineChallenge, pickOfflineStory } from '@/offline';
-import { effectiveControls, FALLBACK_THEMES, makeSiblingPlan, planNext } from '@/progression';
+import { avoidNotesFor, findReusable, fingerprintOf, markSeen, markServed, saveToLibrary } from '@/library';
+import { pickOfflineChallenge, pickOfflineStory, pickOwnSkillChallenge } from '@/offline';
+import { effectiveControls, FALLBACK_THEMES, kindsFor, makeSiblingPlan, planNext } from '@/progression';
 
 // ---------------------------------------------------------------------------
 // Tuning and injectable time / randomness
@@ -71,6 +73,8 @@ export const SUPPLY = {
   keepAsIsRating: 4,
   /** Questions of this many completed challenges on the skill go to a concept check. */
   checkPreviousQuestions: 4,
+  /** After a concept check could not be built for a skill, it is not tried again for this long. */
+  checkRetryMs: 10 * 60_000,
   /** A queued challenge is stale when its stage is further than this from the skill's stage. */
   staleStageDistance: 1,
   /** Longest Imagination Studio idea that is passed on. */
@@ -79,6 +83,15 @@ export const SUPPLY = {
   /** Story chapters for ages 3-8, and for older children. */
   storyChaptersYoung: 3,
   storyChaptersOlder: 4,
+  /**
+   * How long a child who is waiting for a challenge waits for the AI. A real model needs 15 to
+   * 40 seconds for a challenge, and several minutes when it has to be corrected: when this time
+   * is up the built-in bank serves the child, and the AI's challenge joins the queue when it
+   * arrives ...
+   */
+  onDemandWaitMs: 8_000,
+  /** ... and longer where only the AI can make what was asked for (a story chapter, the child's studio idea). */
+  madeToOrderWaitMs: 20_000,
 } as const;
 
 export interface SupplyDeps {
@@ -86,9 +99,17 @@ export interface SupplyDeps {
   now: () => number;
   /** Random source in [0, 1) for item selection and offline seeds. Null uses the progression module's own source. */
   rng: (() => number) | null;
+  /** How long a waiting child waits for the AI: `SUPPLY.onDemandWaitMs` and `SUPPLY.madeToOrderWaitMs`. */
+  onDemandWaitMs: number;
+  madeToOrderWaitMs: number;
 }
 
-const DEFAULT_DEPS: SupplyDeps = { now: () => Date.now(), rng: null };
+const DEFAULT_DEPS: SupplyDeps = {
+  now: () => Date.now(),
+  rng: null,
+  onDemandWaitMs: SUPPLY.onDemandWaitMs,
+  madeToOrderWaitMs: SUPPLY.madeToOrderWaitMs,
+};
 let deps: SupplyDeps = DEFAULT_DEPS;
 
 /** Replaces the clock and the random source (tests). Pass `null` to go back to the defaults. */
@@ -96,13 +117,43 @@ export function setSupplyDeps(next: Partial<SupplyDeps> | null): void {
   deps = next ? { ...DEFAULT_DEPS, ...next } : DEFAULT_DEPS;
 }
 
+/**
+ * Skills whose concept check could not be built a moment ago, per child, with the time it was
+ * tried: the built-in bank had nothing new about the skill that the child has not solved
+ * already, and no AI delivered one. The planner is asked to leave these checks out for a while,
+ * so the child goes on with other skills instead of being handed a "check" that proves nothing.
+ */
+const checkless = new Map<string, Map<string, number>>();
+
+function rememberCheckless(childId: string, skillId: string): void {
+  const skills = checkless.get(childId) ?? new Map<string, number>();
+  skills.set(skillId, deps.now());
+  checkless.set(childId, skills);
+}
+
+function checklessSkills(childId: string): string[] {
+  const skills = checkless.get(childId);
+  if (!skills) return [];
+  const now = deps.now();
+  for (const [skillId, at] of skills) {
+    if (now - at >= SUPPLY.checkRetryMs || now < at) skills.delete(skillId);
+  }
+  return [...skills.keys()];
+}
+
 /** Options for `planNext`: the request's mode and strand (when given), the clock and the random source. */
-function planOptions(mode?: Mode, strand?: Strand): { mode?: Mode; strand?: Strand; now: number; rng?: () => number } {
+function planOptions(
+  mode?: Mode,
+  strand?: Strand,
+  childId?: string,
+): { mode?: Mode; strand?: Strand; now: number; rng?: () => number; withoutChecks?: string[] } {
+  const withoutChecks = childId === undefined ? [] : checklessSkills(childId);
   return {
     ...(mode ? { mode } : {}),
     ...(strand ? { strand } : {}),
     now: deps.now(),
     ...(deps.rng ? { rng: deps.rng } : {}),
+    ...(withoutChecks.length > 0 ? { withoutChecks } : {}),
   };
 }
 
@@ -141,6 +192,25 @@ function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
     if (tails.get(key) === tail) tails.delete(key);
   });
   return track(run);
+}
+
+const LATE = Symbol('late');
+
+/** The value of `work`, or `LATE` when it takes longer than `ms`. The work itself goes on. */
+function within<T>(work: Promise<T>, ms: number): Promise<T | typeof LATE> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(LATE), Math.max(0, ms));
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 const takeKey = (childId: string): string => `take:${childId}`;
@@ -209,6 +279,35 @@ function strandDisabled(controls: ParentalControls, strand: Strand): boolean {
   return STRANDS.some((other) => controls.strands[other] !== false);
 }
 
+/**
+ * Whether a challenge that was approved earlier still passes the content rules of the child
+ * it is about to be shown to. Content is checked when it is made, with the strictness of the
+ * child it was made for; a library item made for a sibling on 'standard', or anything made
+ * before the parent turned strictness up, has to pass again here.
+ */
+function suitsChild(content: Challenge, env: Pick<Env, 'context'>): boolean {
+  return localChallengeSafety(content, env.context.strictness).safe;
+}
+
+/**
+ * Whether a stored challenge may (still) be put in front of the child: its subject and its
+ * kind are switched on and its content passes the child's content rules. Applies to queued
+ * challenges and to an unfinished one alike.
+ */
+function allowedNow(item: Pick<ChallengeRecord, 'strand' | 'mode' | 'content'>, env: Env): boolean {
+  if (strandDisabled(env.controls, item.strand)) return false;
+  if (item.mode === 'mission' && !env.controls.realWorldMissions) return false;
+  return suitsChild(item.content, env);
+}
+
+/**
+ * For the play store's last resort (the supply failed): may this unfinished challenge still
+ * be shown to the child under the current settings?
+ */
+export function stillAllowed(record: ChallengeRecord, child: ChildProfile, settings: Settings): boolean {
+  return allowedNow(record, { child, controls: effectiveControls(settings, child), context: buildContext(child, settings) });
+}
+
 // ---------------------------------------------------------------------------
 // Building one challenge for a plan
 // ---------------------------------------------------------------------------
@@ -263,14 +362,83 @@ async function libraryShareAllows(recent: readonly ChallengeRecord[]): Promise<b
   return fromLibrary < limit;
 }
 
-function offlineMade(plan: ChallengePlan, avoidTitles: string[]): Made {
-  return {
-    content: pickOfflineChallenge(plan, { avoidTitles, seed: offlineSeed() }),
-    source: 'offline',
-    libraryId: null,
-    rating: null,
-    note: '',
+/**
+ * What each child has completed, as fingerprints by challenge id. A completed challenge never
+ * changes, so only the ones that were completed since the last look are read from the database.
+ */
+const completedPrints = new Map<string, Map<string, { strand: Strand; print: string }>>();
+
+/**
+ * Fingerprints of everything the child has solved in the strand, or has waiting (queued or
+ * unfinished). A challenge that was thrown away unseen does not count.
+ */
+async function seenInStrand(childId: string, strand: Strand): Promise<Set<string>> {
+  const known = completedPrints.get(childId) ?? new Map<string, { strand: Strand; print: string }>();
+  completedPrints.set(childId, known);
+  const ids = (await db.challenges.where('[childId+status]').equals([childId, 'completed']).primaryKeys()) as string[];
+  const current = new Set(ids);
+  for (const id of known.keys()) if (!current.has(id)) known.delete(id);
+  const missing = ids.filter((id) => !known.has(id));
+  for (const row of await db.challenges.bulkGet(missing)) {
+    if (row) known.set(row.id, { strand: row.strand, print: fingerprintOf(row.content) });
+  }
+  const waiting = await db.challenges
+    .where('[childId+status]')
+    .anyOf([
+      [childId, 'queued'],
+      [childId, 'active'],
+    ])
+    .toArray();
+  const seen = new Set<string>();
+  for (const entry of known.values()) if (entry.strand === strand) seen.add(entry.print);
+  for (const row of waiting) if (row.strand === strand) seen.add(fingerprintOf(row.content));
+  return seen;
+}
+
+/**
+ * The interaction kinds offline content may come in: the planned one first, then the other
+ * kinds the skill offers in this mode and at this age, those the child used longest ago on the
+ * skill first. Robot programs and builds belong to their modes and are never swapped in or out.
+ */
+async function kindsToTry(plan: ChallengePlan, env: Env): Promise<InteractionKind[]> {
+  const fixed = plan.interaction === 'robot' || plan.interaction === 'build';
+  const skill = getSkill(plan.skillId);
+  // A sibling keeps the format of the challenge it follows; placement items are picked to be quick.
+  if (fixed || !skill || plan.purpose === 'sibling' || plan.purpose === 'placement') return [plan.interaction];
+  const state = await db.skillStates.get(`${env.child.id}:${plan.skillId}`);
+  const recent = state?.recentInteractions ?? [];
+  const age = (kind: InteractionKind): number => {
+    const index = recent.indexOf(kind);
+    return index < 0 ? Number.POSITIVE_INFINITY : index;
   };
+  const others = kindsFor(skill, plan.mode, env.child.ageGroup)
+    .filter((kind) => kind !== plan.interaction && kind !== 'robot' && kind !== 'build')
+    .sort((a, b) => age(b) - age(a));
+  return [plan.interaction, ...others];
+}
+
+/**
+ * A challenge from the built-in bank.
+ *
+ * The bank always has *something* for a plan, but when it has nothing for the plan's own skill
+ * in the planned kind it borrows from a neighbouring skill or another strand. So content made
+ * for the skill itself comes first, and one the child has not been given before: in the planned
+ * kind, else in another kind the skill offers. Practice then accepts a repeat, and as the last
+ * resort borrowed content. A concept check accepts neither: solving a challenge again, or one
+ * about something else, proves nothing about the skill. Null means there is no such check.
+ */
+async function offlineMade(plan: ChallengePlan, env: Env, avoidTitles: string[]): Promise<Made | null> {
+  const made = (content: Challenge): Made => ({ content, source: 'offline', libraryId: null, rating: null, note: '' });
+  const seed = offlineSeed();
+  const seen = await seenInStrand(env.child.id, plan.strand);
+  const unseen = (content: Challenge): boolean => !seen.has(fingerprintOf(content));
+  for (const kind of await kindsToTry(plan, env)) {
+    const own = pickOwnSkillChallenge({ ...plan, interaction: kind }, { avoidTitles, seed, accept: unseen });
+    if (own) return made(own);
+  }
+  if (plan.purpose === 'check') return null;
+  const repeat = pickOwnSkillChallenge(plan, { avoidTitles, seed });
+  return made(repeat ?? pickOfflineChallenge(plan, { avoidTitles, seed }));
 }
 
 /**
@@ -308,11 +476,16 @@ async function fromLibrary(
   skillName: string,
   offlineOnly: boolean,
   now: number,
+  /** The child is waiting: a remix that takes too long is given up, and the item is served as it is. */
+  waiting = false,
 ): Promise<Made | null> {
   const { child, context } = env;
   let found: Awaited<ReturnType<typeof findReusable>> = null;
   try {
-    found = await findReusable(plan, { id: child.id, ageGroup: child.ageGroup, interests: context.interests }, context.locale);
+    found = await findReusable(plan, { id: child.id, ageGroup: child.ageGroup, interests: context.interests }, context.locale, {
+      // The library is shared: an item approved under a sibling's looser rules is not for this child.
+      accept: (item) => suitsChild(item.content, env),
+    });
   } catch {
     return null;
   }
@@ -322,7 +495,12 @@ async function fromLibrary(
   if (!themeFits && !wellLiked && !offlineOnly) {
     let remixed: Challenge | null = null;
     try {
-      remixed = await remixChallenge({ original: item.content, plan, child: context, expectation, skillName });
+      const controller = new AbortController();
+      const pending = remixChallenge({ original: item.content, plan, child: context, expectation, skillName, signal: controller.signal });
+      const result = waiting ? await within(pending, deps.onDemandWaitMs) : await pending;
+      // Too slow for a child who is waiting. The original is served instead, so the remix has no use any more.
+      if (result === LATE) controller.abort();
+      else remixed = result;
     } catch {
       remixed = null;
     }
@@ -347,7 +525,61 @@ async function lastCompletedOnSkill(childId: string, skillId: string, limit: num
   return rows.sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0)).slice(0, limit);
 }
 
-/** A new challenge from the AI (kept in the library), or from the offline bank when the AI has none. */
+/** Made for one moment only (a concept check, a sibling, a story chapter, a studio canvas): never taken from the library, never queued for later. */
+function isMadeToOrder(plan: ChallengePlan, options: BuildOptions): boolean {
+  return plan.purpose === 'check' || plan.purpose === 'sibling' || plan.mode === 'story' || plan.mode === 'studio' || options.story !== undefined;
+}
+
+/**
+ * `generateChallenge` for a child who is waiting on the loading screen: its answer, or `LATE`
+ * when the AI needs longer than a child should wait (the caller then serves the built-in bank).
+ * A late answer is not thrown away: an ordinary challenge joins the queue when it arrives. One
+ * that only this moment could use is cancelled.
+ */
+async function generatedInTime(
+  request: GenerateChallengeRequest,
+  plan: ChallengePlan,
+  env: Env,
+  options: BuildOptions,
+): Promise<Awaited<ReturnType<typeof generateChallenge>> | typeof LATE> {
+  const madeToOrder = isMadeToOrder(plan, options);
+  const controller = new AbortController();
+  const pending = generateChallenge({ ...request, signal: controller.signal });
+  const result = await within(pending, madeToOrder ? deps.madeToOrderWaitMs : deps.onDemandWaitMs);
+  if (result === LATE) {
+    if (madeToOrder) controller.abort();
+    else void track(queueLate(pending, plan, env.child.id));
+  }
+  return result;
+}
+
+/** Stores the AI's challenge that arrived after the child was served from the bank: in the library, and in the child's queue. Never rejects. */
+async function queueLate(pending: ReturnType<typeof generateChallenge>, plan: ChallengePlan, childId: string): Promise<void> {
+  try {
+    const late = await pending;
+    if (late.source !== 'ai') return;
+    await serialize(buildKey(childId), async () => {
+      const env = await loadEnv(childId);
+      // The parent may have changed the rules in the meantime.
+      if (!allowedNow({ strand: plan.strand, mode: plan.mode, content: late.content }, env)) return;
+      const now = deps.now();
+      if ((await freshQueue(env)).length >= SUPPLY.queueMax) {
+        // No room in the queue: the canvas is still kept for later (not marked as served to anyone).
+        await saveToLibrary({ content: late.content, plan, ageGroup: env.child.ageGroup, locale: env.context.locale, origin: 'ai', remixOf: null }, now);
+        return;
+      }
+      const kept = await keepInLibrary(late.content, plan, env, 'ai', null, now);
+      if (kept) await storeChallenge(kept, plan, env, { status: 'queued' }, now);
+    });
+  } catch {
+    // Nobody is waiting for it.
+  }
+}
+
+/**
+ * A new challenge from the AI (kept in the library), or from the offline bank when the AI has
+ * none (or, for a child who is waiting, takes too long). Null only for a concept check that neither could deliver (see `offlineMade`).
+ */
 async function freshlyMade(
   plan: ChallengePlan,
   env: Env,
@@ -356,7 +588,7 @@ async function freshlyMade(
   avoidTitles: string[],
   options: BuildOptions,
   now: number,
-): Promise<Made> {
+): Promise<Made | null> {
   const childId = env.child.id;
   const request: GenerateChallengeRequest = { plan, child: env.context, expectation, skillName, avoidTitles };
   try {
@@ -375,22 +607,28 @@ async function freshlyMade(
     if (options.story) request.story = options.story.context;
     if (options.studioIdea) request.studioIdea = options.studioIdea;
 
-    const result = await generateChallenge(request);
-    if (result.source !== 'ai') return { content: result.content, source: 'offline', libraryId: null, rating: null, note: '' };
-    const kept = await keepInLibrary(result.content, plan, env, 'ai', null, now);
-    if (kept) return kept;
+    const result = options.status === 'active' ? await generatedInTime(request, plan, env, options) : await generateChallenge(request);
+    if (result !== LATE && result.source === 'ai') {
+      const kept = await keepInLibrary(result.content, plan, env, 'ai', null, now);
+      if (kept) return kept;
+    }
+    // Without the AI (Demo mode, the budget spent, a failure) `generateChallenge` answers from the
+    // bank with the wide search. The supply knows what the child has seen: it picks for itself.
   } catch {
     // generateChallenge promises not to throw; if anything here does, the child still gets a challenge.
   }
-  return offlineMade(plan, request.avoidTitles ?? avoidTitles);
+  return offlineMade(plan, env, request.avoidTitles ?? avoidTitles);
 }
 
 /**
  * Turns a plan into a stored challenge. Concept checks, siblings, story
  * chapters and studio canvases are always made new; everything else looks in
  * the library first.
+ *
+ * Null only for a concept check that cannot be made: nothing new about the skill is to be had.
+ * The skill is remembered (`checkless`), so the planner leaves its check out for a while.
  */
-async function buildChallenge(plan: ChallengePlan, env: Env, options: BuildOptions): Promise<ChallengeRecord> {
+async function buildChallenge(plan: ChallengePlan, env: Env, options: BuildOptions): Promise<ChallengeRecord | null> {
   const now = deps.now();
   const { child } = env;
   const stage = clampStage(plan.stage);
@@ -403,21 +641,26 @@ async function buildChallenge(plan: ChallengePlan, env: Env, options: BuildOptio
   const recent = await recentRows(child.id, SUPPLY.recentTitles);
   const avoidTitles = titlesOf(recent);
   const offlineOnly = options.offlineOnly === true;
-  const madeToOrder =
-    plan.purpose === 'check' ||
-    plan.purpose === 'sibling' ||
-    plan.mode === 'story' ||
-    plan.mode === 'studio' ||
-    options.story !== undefined;
+  const madeToOrder = isMadeToOrder(plan, options);
 
   let made: Made | null = null;
   if (!madeToOrder && (await libraryShareAllows(recent))) {
-    made = await fromLibrary(plan, env, expectation, skillName, offlineOnly, now);
+    made = await fromLibrary(plan, env, expectation, skillName, offlineOnly, now, options.status === 'active');
   }
   made ??= offlineOnly
-    ? offlineMade(plan, avoidTitles)
+    ? await offlineMade(plan, env, avoidTitles)
     : await freshlyMade(plan, env, expectation, skillName, avoidTitles, options, now);
+  if (!made) {
+    rememberCheckless(child.id, plan.skillId);
+    return null;
+  }
+  return storeChallenge(made, { ...plan, stage }, env, options, now);
+}
 
+/** Writes the row of a challenge that was made for the plan. */
+async function storeChallenge(made: Made, plan: ChallengePlan, env: Env, options: BuildOptions, now: number): Promise<ChallengeRecord> {
+  const { child } = env;
+  const stage = clampStage(plan.stage);
   const record: ChallengeRecord = {
     id: newId('ch'),
     childId: child.id,
@@ -448,13 +691,35 @@ async function buildChallenge(plan: ChallengePlan, env: Env, options: BuildOptio
   return record;
 }
 
+/**
+ * Plans the child's next challenge and builds it. When the plan is a concept check that cannot
+ * be made, the planner is asked again, now without that check; `shape` adapts each plan (a story
+ * chapter, a studio canvas) and gives the build options.
+ */
+async function buildPlanned(
+  env: Env,
+  request: { mode?: Mode; strand?: Strand },
+  shape: (planned: ChallengePlan) => { plan: ChallengePlan; options: BuildOptions },
+): Promise<ChallengeRecord> {
+  const childId = env.child.id;
+  for (let go = 0; ; go += 1) {
+    const [planned] = await planNext(childId, 1, planOptions(request.mode, request.strand, childId));
+    if (!planned) throw new Error('The planner returned no plan');
+    const { plan, options } = shape(planned);
+    // The planner should not come back with the same impossible check. If it ever does, the
+    // child gets the challenge as plain practice rather than nothing.
+    const last = go >= 2 && plan.purpose === 'check';
+    const record = await buildChallenge(last ? { ...plan, purpose: 'core' } : plan, env, options);
+    if (record) return record;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The queue: stale items, picking, filling
 // ---------------------------------------------------------------------------
 
 function isStale(item: ChallengeRecord, env: Env, states: ReadonlyMap<string, SkillState>): boolean {
-  if (strandDisabled(env.controls, item.strand)) return true;
-  if (item.mode === 'mission' && !env.controls.realWorldMissions) return true;
+  if (!allowedNow(item, env)) return true;
   if (item.purpose === 'placement') return env.child.placementDone;
   const state = states.get(item.skillId);
   if (item.purpose === 'check') {
@@ -470,6 +735,25 @@ function isStale(item: ChallengeRecord, env: Env, states: ReadonlyMap<string, Sk
   return Math.abs(state.stage - item.stage) > SUPPLY.staleStageDistance;
 }
 
+const lowRating = (rating: number | null): boolean => rating !== null && rating < 3;
+
+/**
+ * The library canvases behind these challenges that a parent took out of circulation: retired,
+ * or rated 1 or 2 stars. "Never served again" also holds for a challenge that was made from the
+ * canvas before the parent looked at it and is still waiting (or unfinished).
+ */
+async function retiredCanvases(rows: readonly ChallengeRecord[]): Promise<Set<string>> {
+  const ids = [...new Set(rows.flatMap((row) => (row.libraryId === null ? [] : [row.libraryId])))];
+  if (ids.length === 0) return new Set();
+  const items = await db.library.bulkGet(ids);
+  return new Set(items.flatMap((item) => (item && (item.retired || lowRating(item.rating)) ? [item.id] : [])));
+}
+
+/** Whether a parent rejected this challenge: its own rating is 1 or 2 stars, or its canvas was retired. */
+function rejectedByParent(item: Pick<ChallengeRecord, 'libraryId' | 'parentRating'>, retired: ReadonlySet<string>): boolean {
+  return lowRating(item.parentRating) || (item.libraryId !== null && retired.has(item.libraryId));
+}
+
 /** Discards the queued challenges that went stale and returns the rest, oldest first. */
 async function freshQueue(env: Env): Promise<ChallengeRecord[]> {
   const childId = env.child.id;
@@ -478,7 +762,8 @@ async function freshQueue(env: Env): Promise<ChallengeRecord[]> {
     db.skillStates.where('childId').equals(childId).toArray(),
   ]);
   const states = new Map(stateRows.map((state) => [state.skillId, state]));
-  const stale = queued.filter((item) => isStale(item, env, states));
+  const retired = await retiredCanvases(queued);
+  const stale = queued.filter((item) => rejectedByParent(item, retired) || isStale(item, env, states));
   if (stale.length > 0) {
     const staleIds = new Set(stale.map((item) => item.id));
     await db.challenges
@@ -490,21 +775,65 @@ async function freshQueue(env: Env): Promise<ChallengeRecord[]> {
   return queued.filter((item) => !stale.includes(item)).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/** Where the play store keeps the run of an unfinished challenge (see session.ts). Per-child `kv` key. */
+const runKey = (record: Pick<ChallengeRecord, 'id' | 'childId'>): string => `play:run:${record.id}:${record.childId}`;
+
+/**
+ * The child's unfinished challenges that may still be shown, oldest first. One that the
+ * parent's settings no longer allow (its subject or real-world missions were switched off,
+ * or the content rules were tightened), or whose canvas the parent retired or rated 1 or 2
+ * stars, is discarded together with its saved run: "no skipping" binds the child, not the
+ * parent's switches.
+ */
+async function activeChallenges(env: Env): Promise<ChallengeRecord[]> {
+  const childId = env.child.id;
+  const active = await db.challenges.where('[childId+status]').equals([childId, 'active']).toArray();
+  const retired = await retiredCanvases(active);
+  const withdrawn = active.filter((item) => !allowedNow(item, env) || rejectedByParent(item, retired));
+  if (withdrawn.length > 0) {
+    await db.transaction('rw', db.challenges, db.kv, async () => {
+      for (const item of withdrawn) {
+        const row = await db.challenges.get(item.id);
+        if (row?.status === 'active') await db.challenges.update(item.id, { status: 'discarded' });
+        await db.kv.delete(runKey(item));
+      }
+    });
+  }
+  return active
+    .filter((item) => !withdrawn.includes(item))
+    .sort((a, b) => (a.startedAt ?? a.createdAt) - (b.startedAt ?? b.createdAt));
+}
+
 /** What the child asked for, with everything a parent switched off (or that is not a real value) taken out. */
 interface Request {
   mode?: Mode;
   strand?: Strand;
+  /** Free text from the child. Only present while open chat is on. */
   idea?: string;
+  /** The ids of the three studio chips ("dragon.baking.moon"). */
+  pick?: string;
 }
 
-function readRequest(opts: { mode?: Mode; strand?: Strand; idea?: string }, env: Env): Request {
+/** What `takeNext` may be asked for: it comes from the address of the play screen, which anyone can type. */
+export interface TakeOptions {
+  mode?: Mode;
+  strand?: Strand;
+  idea?: string;
+  pick?: string;
+}
+
+function readRequest(opts: TakeOptions, env: Env): Request {
   const request: Request = {};
-  const mode = (MODES as readonly unknown[]).includes(opts.mode) ? opts.mode : undefined;
+  // The creative modes open after the first adventure: until the placement is done every request is ordinary play.
+  const mode = env.child.placementDone && (MODES as readonly unknown[]).includes(opts.mode) ? opts.mode : undefined;
   // A plain quest is ordinary play. A mission is ordinary play too while missions are switched off.
   if (mode && mode !== 'quest' && !(mode === 'mission' && !env.controls.realWorldMissions)) request.mode = mode;
   const strand = (STRANDS as readonly unknown[]).includes(opts.strand) ? opts.strand : undefined;
   if (strand && !strandDisabled(env.controls, strand)) request.strand = strand;
-  if (typeof opts.idea === 'string') request.idea = opts.idea;
+  // Free text reaches the AI only while the parent has open chat on. The studio screen hides
+  // its text box otherwise, but the address can be typed by hand: the rule is enforced here.
+  if (typeof opts.idea === 'string' && env.controls.openChat) request.idea = opts.idea;
+  if (typeof opts.pick === 'string') request.pick = opts.pick;
   return request;
 }
 
@@ -516,9 +845,22 @@ function fitsRequest(item: Pick<ChallengeRecord, 'mode' | 'strand'>, request: Re
 
 const PURPOSE_ORDER: Partial<Record<ChallengeRecord['purpose'], number>> = { check: 0, sibling: 1 };
 
+/**
+ * Whether a queued challenge may be served for the request. A concept check and the easier
+ * follow-up after a walkthrough are due whatever mode the child is playing in: a child who
+ * only ever opens Robot Coder must still get the checks that raise a stage (they are planned
+ * as plain quests, in another format than the practice). The strand asked for still holds.
+ */
+function servesRequest(item: Pick<ChallengeRecord, 'mode' | 'strand' | 'purpose'>, request: Request): boolean {
+  if (item.purpose === 'check' || item.purpose === 'sibling') {
+    return request.strand === undefined || item.strand === request.strand;
+  }
+  return fitsRequest(item, request);
+}
+
 /** The queued challenge to serve next: concept checks first, then siblings, then the oldest. */
 async function pickQueued(env: Env, request: Request): Promise<ChallengeRecord | undefined> {
-  const queue = (await freshQueue(env)).filter((item) => fitsRequest(item, request));
+  const queue = (await freshQueue(env)).filter((item) => servesRequest(item, request));
   queue.sort((a, b) => (PURPOSE_ORDER[a.purpose] ?? 2) - (PURPOSE_ORDER[b.purpose] ?? 2) || a.createdAt - b.createdAt);
   return queue[0];
 }
@@ -560,10 +902,9 @@ async function fillQueue(childId: string, opts: { min?: number; target?: number 
       started = true;
       const budget = await checkBudget(deps.now());
       budgetRefusals = budget.allowed ? 0 : budgetRefusals + 1;
-      const [plan] = await planNext(childId, 1, planOptions());
-      if (!plan) return false;
       // With the AI budget spent, stop asking: the offline bank fills the rest at once.
-      await buildChallenge(plan, env, { status: 'queued', offlineOnly: budgetRefusals > 1 });
+      const offlineOnly = budgetRefusals > 1;
+      await buildPlanned(env, {}, (plan) => ({ plan, options: { status: 'queued', offlineOnly } }));
       return true;
     });
     if (!more) return;
@@ -748,20 +1089,19 @@ async function nextStoryChapter(env: Env, request: Request): Promise<ChallengeRe
   if (!chapter) throw new Error(`Story ${story.id} has no chapter ${chapterIndex}`);
   const illustration = await illustrationFor(story, chapterIndex);
 
-  const [planned] = await planNext(env.child.id, 1, planOptions('story', request.strand));
-  if (!planned) throw new Error('The planner returned no plan');
   // The story's theme joins the plan only when it is one of the known themes; the chapter text carries the rest.
   const known = [...env.context.interests, ...FALLBACK_THEMES].some((theme) => theme.toLowerCase() === story.theme.toLowerCase());
-  const plan: ChallengePlan = { ...planned, mode: 'story', theme: known ? story.theme : planned.theme };
-
-  const record = await buildChallenge(plan, env, {
-    status: 'active',
-    story: {
-      id: story.id,
-      chapterIndex,
-      context: { title: story.title, heading: chapter.heading, narrative: chapter.narrative, illustration },
+  const record = await buildPlanned(env, { mode: 'story', ...(request.strand ? { strand: request.strand } : {}) }, (planned) => ({
+    plan: { ...planned, mode: 'story', theme: known ? story.theme : planned.theme },
+    options: {
+      status: 'active',
+      story: {
+        id: story.id,
+        chapterIndex,
+        context: { title: story.title, heading: chapter.heading, narrative: chapter.narrative, illustration },
+      },
     },
-  });
+  }));
   if (env.controls.aiImages && chapter.imageDataUrl === null) {
     void track(fetchIllustration(story.id, chapterIndex, illustration));
   }
@@ -781,30 +1121,50 @@ function safeIdea(idea: string | undefined, strictness: ChildContext['strictness
   return localSafetyCheck(whole, strictness).safe && localSafetyCheck(short, strictness).safe ? short : null;
 }
 
+/**
+ * The sentence for a picture idea ("dragon.baking.moon" -> "A dragon baking cookies on the
+ * moon"), built from the studio's own fixed phrases. Null for ids that are not chips.
+ * The child module owns the chips and their words; it is loaded on demand.
+ */
+async function pictureIdea(pick: string): Promise<string | null> {
+  const [character, action, place, ...rest] = pick.split('.');
+  if (!character || !action || !place || rest.length > 0) return null;
+  try {
+    const { buildIdea } = await import('@/child');
+    return buildIdea({ character, action, place });
+  } catch {
+    return null;
+  }
+}
+
 async function studioCanvas(env: Env, request: Request): Promise<ChallengeRecord> {
-  const [planned] = await planNext(env.child.id, 1, planOptions('studio', request.strand));
-  if (!planned) throw new Error('The planner returned no plan');
-  const idea = safeIdea(request.idea, env.context.strictness);
+  // The child's own words when there are any (open chat is on then), else the picture idea.
+  const wanted = request.idea ?? (request.pick !== undefined ? await pictureIdea(request.pick) : null);
+  const idea = safeIdea(wanted ?? undefined, env.context.strictness);
   // Without a usable idea the canvas is about the child's first interest.
   const fallback = env.context.interests[0] ?? FALLBACK_THEMES[0] ?? 'animals';
-  const plan: ChallengePlan = { ...planned, mode: 'studio', theme: idea ? planned.theme : fallback };
-  return buildChallenge(plan, env, { status: 'active', studioIdea: idea ?? fallback });
+  return buildPlanned(env, { mode: 'studio', ...(request.strand ? { strand: request.strand } : {}) }, (planned) => ({
+    plan: { ...planned, mode: 'studio', theme: idea ? planned.theme : fallback },
+    options: { status: 'active', studioIdea: idea ?? fallback },
+  }));
 }
 
 // ---------------------------------------------------------------------------
 // Taking the next challenge
 // ---------------------------------------------------------------------------
 
-async function takeNextNow(childId: string, opts: { mode?: Mode; strand?: Strand; idea?: string }): Promise<ChallengeRecord> {
+async function takeNextNow(childId: string, opts: TakeOptions): Promise<ChallengeRecord> {
   const env = await loadEnv(childId);
   const request = readRequest(opts, env);
 
-  // 1. No skipping: an unfinished challenge that fits what was asked for comes back first.
-  const active = await db.challenges.where('[childId+status]').equals([childId, 'active']).toArray();
-  const resumed = active
-    // A story has one challenge per chapter: an unfinished chapter comes back whatever strand was asked for.
-    .filter((item) => (request.mode === 'story' ? item.mode === 'story' : fitsRequest(item, request)))
-    .sort((a, b) => (a.startedAt ?? a.createdAt) - (b.startedAt ?? b.createdAt))[0];
+  // 1. No skipping: an unfinished challenge comes back first, whatever was asked for. Opening
+  //    another world or mode is not a way around it: what was asked for comes after it. Rows
+  //    from before this rule can hold several unfinished ones; then the one that fits goes first.
+  const active = await activeChallenges(env);
+  const resumed =
+    active
+      // A story has one challenge per chapter: an unfinished chapter comes back whatever strand was asked for.
+      .filter((item) => (request.mode === 'story' ? item.mode === 'story' : fitsRequest(item, request)))[0] ?? active[0];
   if (resumed) {
     void ensureQueue(childId);
     return resumed;
@@ -817,21 +1177,24 @@ async function takeNextNow(childId: string, opts: { mode?: Mode; strand?: Strand
     record = await studioCanvas(env, request);
   } else {
     // 2. Something from the queue.
+    let topUpIsSlow = false;
     let queued = await pickQueued(env, request);
     if (!queued && request.mode === undefined && request.strand === undefined) {
       // A top-up is already making a challenge: waiting for it is quicker than starting another.
+      // But not for longer than a child should wait: a real model can take minutes over one.
       const underway = tails.get(buildKey(childId));
       if (underway) {
-        await underway;
+        topUpIsSlow = (await within(underway, deps.onDemandWaitMs)) === LATE;
         queued = await pickQueued(env, request);
       }
     }
     if (queued) record = await activate(queued.id);
-    // 3. Nothing ready: make one now, so the child never waits on a missing queue.
+    // 3. Nothing ready: make one now, so the child never waits on a missing queue. While the
+    //    top-up is still busy with the AI, this one comes from the library or the built-in bank
+    //    (one AI request at a time), and the top-up's challenge is there for the next turn.
     if (!record) {
-      const [plan] = await planNext(childId, 1, planOptions(request.mode, request.strand));
-      if (!plan) throw new Error('The planner returned no plan');
-      record = await buildChallenge(plan, env, { status: 'active' });
+      const asked = { ...(request.mode ? { mode: request.mode } : {}), ...(request.strand ? { strand: request.strand } : {}) };
+      record = await buildPlanned(env, asked, (plan) => ({ plan, options: { status: 'active', offlineOnly: topUpIsSlow } }));
     }
   }
   void ensureQueue(childId);
@@ -841,19 +1204,22 @@ async function takeNextNow(childId: string, opts: { mode?: Mode; strand?: Strand
 /**
  * The challenge the child plays next, already marked `active`.
  *
- * - An active challenge that fits the request (no mode and strand asked for, or
- *   the same ones) is returned again: there is no skipping. An active challenge
- *   that does not fit stays active and comes back on the next plain request.
+ * - An active challenge is returned again, whatever mode or strand was asked
+ *   for: there is no skipping, and opening another world or mode does not set a
+ *   challenge aside. What was asked for is served once it is finished.
  * - Otherwise the queue is used: concept checks first, then siblings, then the
  *   oldest, after stale items were discarded.
  * - Otherwise one is built now. Story mode serves the next chapter of the
- *   child's story; studio mode draws the child's idea when it is suitable.
+ *   child's story; studio mode draws the child's idea when it is suitable: the
+ *   picture idea (`pick`, three chip ids), or the typed `idea` while open chat
+ *   is on. With open chat off, free text from the request is ignored.
+ * - Until the placement is done, a mode in the request is ignored.
  *
  * `mode: 'quest'` means ordinary play, like no mode. Calls for one child run
  * one after the other, so two callers never get two different new challenges.
  * Rejects only when the child does not exist.
  */
-export function takeNext(childId: string, opts: { mode?: Mode; strand?: Strand; idea?: string } = {}): Promise<ChallengeRecord> {
+export function takeNext(childId: string, opts: TakeOptions = {}): Promise<ChallengeRecord> {
   return serialize(takeKey(childId), () => takeNextNow(childId, opts));
 }
 
@@ -875,10 +1241,13 @@ export function makeSibling(previous: ChallengeRecord): Promise<ChallengeRecord>
   const making = track(
     (async () => {
       const env = await loadEnv(previous.childId);
-      return buildChallenge(makeSiblingPlan(previous), env, {
+      const sibling = await buildChallenge(makeSiblingPlan(previous), env, {
         status: 'queued',
         previousQuestion: previous.content.question,
       });
+      // Only a concept check can come back empty.
+      if (!sibling) throw new Error('The sibling could not be built');
+      return sibling;
     })(),
   );
   siblings.set(previous.id, making);
@@ -911,7 +1280,7 @@ export function prepareConceptCheck(childId: string, skillId: string): Promise<v
       if (waiting > 0) return;
       const env = await loadEnv(childId);
       // The planner puts checks first; make sure the plan really is the check for this skill.
-      const plans = await planNext(childId, CHECK_LOOKAHEAD, planOptions());
+      const plans = await planNext(childId, CHECK_LOOKAHEAD, planOptions(undefined, undefined, childId));
       const plan = plans.find((candidate) => candidate.purpose === 'check' && candidate.skillId === skillId);
       if (!plan) return;
       await buildChallenge(plan, env, { status: 'queued' });
@@ -924,5 +1293,7 @@ export function prepareConceptCheck(childId: string, skillId: string): Promise<v
 /** Forgets which siblings were made and goes back to the real clock (tests, after `supplyIdle()`). */
 export function resetSupply(): void {
   siblings.clear();
+  checkless.clear();
+  completedPrints.clear();
   deps = DEFAULT_DEPS;
 }

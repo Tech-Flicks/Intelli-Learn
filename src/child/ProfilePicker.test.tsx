@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { updateSettings } from '@/data';
+import { db, updateSettings } from '@/data';
+import { RESET_REQUEST_KEY } from '@/security';
 import { setLocale } from '@/i18n';
 import { voiceMock } from './testing/voiceMock';
 import { addChild, freshDevice, renderChildArea } from './testSupport';
@@ -44,6 +45,20 @@ describe('profile picker', () => {
     renderChildArea('/kids');
     await userEvent.click(await screen.findByRole('button', { name: 'Grown-ups' }));
     expect(await screen.findByTestId('elsewhere')).toHaveTextContent('parent:/parent');
+  });
+
+  it('tells grown-ups about a waiting forgotten-password reset, and only then', async () => {
+    await addChild({ nickname: 'Mia' });
+    const view = renderChildArea('/kids');
+    await screen.findByRole('button', { name: 'Play as Mia' });
+    expect(screen.queryByTestId('reset-notice')).not.toBeInTheDocument();
+    view.unmount();
+
+    await db.kv.put({ key: RESET_REQUEST_KEY, value: { requestedAt: Date.now() } });
+    renderChildArea('/kids');
+    const notice = await screen.findByTestId('reset-notice');
+    expect(notice).toHaveTextContent(/someone asked to reset this app/);
+    expect(notice).toHaveTextContent(/enter your password to stop it/);
   });
 
   it('shows a friendly empty state that points a grown-up to the parent area', async () => {

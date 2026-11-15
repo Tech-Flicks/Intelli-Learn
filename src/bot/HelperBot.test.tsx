@@ -8,7 +8,7 @@ import { usePlaySession, type BotMessage, type PlaySessionState } from '@/play';
 import { CHOICE, freshDevice, makeContent, makeRecord } from '@/play/testing/support';
 import { voiceMock } from '@/play/testing/voiceMock';
 import { HelperBot } from './HelperBot';
-import { BOT, positionKey } from './geometry';
+import { BOT, positionKey, restInset } from './geometry';
 
 vi.mock('@/voice', () => import('@/play/testing/voiceMock'));
 vi.mock('@/bot/pip', () => import('@/play/testing/pipMock'));
@@ -158,6 +158,144 @@ describe('HelperBot: floating', () => {
   });
 });
 
+describe('HelperBot: out of the way', () => {
+  const rect = (top: number, height: number): DOMRect => ({ x: 0, y: top, top, left: 0, width: 300, height, right: 300, bottom: top + height, toJSON: () => ({}) });
+
+  /** The seat the question card keeps for Pip and the Check bar, at the places the page would put them. */
+  function page(seatTop: number, checkTop: number): { scrollTo: (seat: number, check: number) => void; remove: () => void } {
+    const seat = document.createElement('span');
+    seat.setAttribute('data-bot-seat', '');
+    const bar = document.createElement('div');
+    bar.setAttribute('data-check-bar', '');
+    let places = { seat: seatTop, check: checkTop };
+    seat.getBoundingClientRect = () => rect(places.seat, 62);
+    bar.getBoundingClientRect = () => rect(places.check, 64);
+    document.body.append(seat, bar);
+    return {
+      scrollTo: (seatAt, checkAt) => {
+        places = { seat: seatAt, check: checkAt };
+        act(() => {
+          document.body.dispatchEvent(new Event('scroll'));
+        });
+      },
+      remove: () => {
+        seat.remove();
+        bar.remove();
+      },
+    };
+  }
+
+  it('rests next to Check, in room the Check bar keeps for him, once the question card has scrolled away', async () => {
+    const homeTop = BOT.topBarFallback + BOT.margin + BOT.dockDrop;
+    const scroller = page(homeTop, window.innerHeight + 300);
+    try {
+      await show();
+      const bubble = screen.getByTestId('helper-bot');
+      const size = Number.parseFloat(bubble.style.width);
+      expect(bubble).toHaveAttribute('data-spot', 'seat');
+      expect(usePlaySession.getState().botInset).toBe(0);
+
+      // The page is scrolled: the card (and the seat) are gone, Check is at the bottom of the screen.
+      scroller.scrollTo(-400, window.innerHeight - 72);
+      await waitFor(() => expect(bubble).toHaveAttribute('data-spot', 'check'));
+      expect(bubble.style.top).toBe(`${window.innerHeight - BOT.margin - size}px`);
+      expect(usePlaySession.getState().botInset).toBe(restInset(size));
+      // He is still "at home": nothing was stored, and the card keeps his seat.
+      expect(bubble).toHaveAttribute('data-docked', 'true');
+      expect(usePlaySession.getState().botDocked).toBe(true);
+      expect(await db.kv.get(positionKey(CHILD))).toBeUndefined();
+
+      // Back at the top of the page he is back in his seat, and Check has its full width again.
+      scroller.scrollTo(homeTop, window.innerHeight + 300);
+      await waitFor(() => expect(bubble).toHaveAttribute('data-spot', 'seat'));
+      expect(bubble.style.top).toBe(`${homeTop}px`);
+      expect(usePlaySession.getState().botInset).toBe(0);
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it('stays in his seat while Check is still below the screen', async () => {
+    const scroller = page(-400, window.innerHeight + 40);
+    try {
+      await show();
+      const bubble = screen.getByTestId('helper-bot');
+      scroller.scrollTo(-420, window.innerHeight + 20);
+      expect(bubble).toHaveAttribute('data-spot', 'seat');
+      expect(usePlaySession.getState().botInset).toBe(0);
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it('goes up to his seat when a sheet opens, and gives Check its room back', async () => {
+    const scroller = page(-400, window.innerHeight - 72);
+    try {
+      await show();
+      const bubble = screen.getByTestId('helper-bot');
+      await waitFor(() => expect(bubble).toHaveAttribute('data-spot', 'check'));
+      set({ walkthroughOpen: true });
+      expect(bubble).toHaveAttribute('data-spot', 'seat');
+      expect(bubble.style.top).toBe(`${BOT.topBarFallback + BOT.margin + BOT.dockDrop}px`);
+      await waitFor(() => expect(usePlaySession.getState().botInset).toBe(0));
+      set({ walkthroughOpen: false });
+      await waitFor(() => expect(bubble).toHaveAttribute('data-spot', 'check'));
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it('is at home while a sheet is open, wherever the child put him, and goes back afterwards', async () => {
+    // Left at the bottom of the screen: that is where the sheets and their buttons are.
+    await db.kv.put({ key: positionKey(CHILD), value: { v: 1, fx: 1, fy: 1 } });
+    const pip = await show();
+    const bubble = screen.getByTestId('helper-bot');
+    const size = Number.parseFloat(bubble.style.width);
+    const homeTop = `${BOT.topBarFallback + BOT.margin + BOT.dockDrop}px`;
+    const lowTop = `${window.innerHeight - BOT.margin - size}px`;
+    expect(bubble.style.top).toBe(lowTop);
+
+    for (const sheet of [{ phase: 'solved' }, { phase: 'teachback' }, { phase: 'recorded' }, { walkthroughOpen: true }, { breakOpen: true }] as const) {
+      set({ phase: 'answering', walkthroughOpen: false, breakOpen: false, ...sheet });
+      expect(bubble.style.top).toBe(homeTop);
+      // The question card keeps his seat free while he is there.
+      expect(usePlaySession.getState().botDocked).toBe(true);
+    }
+
+    // He cannot be dragged down onto the sheet, and his place is not forgotten.
+    fireEvent.pointerDown(pip, { pointerId: 1, button: 0, clientX: 500, clientY: 100 });
+    fireEvent.pointerMove(pip, { pointerId: 1, clientX: 400, clientY: 500 });
+    fireEvent.pointerUp(pip, { pointerId: 1, clientX: 400, clientY: 500 });
+    expect(bubble.style.top).toBe(homeTop);
+    pip.focus();
+    await user.keyboard('{ArrowDown}{Home}');
+    expect((await db.kv.get(positionKey(CHILD)))?.value).toMatchObject({ v: 1, fx: 1, fy: 1 });
+
+    set({ phase: 'answering', walkthroughOpen: false, breakOpen: false });
+    expect(bubble.style.top).toBe(lowTop);
+    expect(usePlaySession.getState().botDocked).toBe(false);
+  });
+
+  it('sits above his own panel when the panel is a sheet at the bottom of a phone', async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
+    try {
+      await db.kv.put({ key: positionKey(CHILD), value: { v: 1, fx: 0, fy: 1 } });
+      const pip = await show();
+      const bubble = screen.getByTestId('helper-bot');
+      const lowTop = bubble.style.top;
+      await user.click(pip);
+      expect(screen.getByTestId('bot-panel')).toBeInTheDocument();
+      expect(bubble.style.top).toBe(`${BOT.topBarFallback + BOT.margin + BOT.dockDrop}px`);
+      await user.click(pip);
+      expect(screen.queryByTestId('bot-panel')).toBeNull();
+      expect(bubble.style.top).toBe(lowTop);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    }
+  });
+});
+
 describe("HelperBot: Pip's face", () => {
   it('mirrors the play session, talking and listening', async () => {
     await show({ botState: 'curious' });
@@ -197,6 +335,50 @@ describe('HelperBot: the speech bubble', () => {
     await user.click(within(bubble).getByRole('button', { name: 'Close message' }));
     await waitFor(() => expect(screen.queryByTestId('bot-bubble')).toBeNull());
     expect(usePlaySession.getState().botLine).toBeNull();
+  });
+
+  describe('a long line', () => {
+    const LONG = 'Look at the picture very slowly and count every single star that you can find. '.repeat(4).trim();
+
+    /** jsdom lays nothing out: the text is given the sizes a phone gives it (a 192 px window on 380 px of text). */
+    function layOut(text: HTMLElement, scrollTop = 0): void {
+      Object.defineProperty(text, 'clientHeight', { configurable: true, value: 192 });
+      Object.defineProperty(text, 'scrollHeight', { configurable: true, value: 380 });
+      Object.defineProperty(text, 'scrollTop', { configurable: true, writable: true, value: scrollTop });
+    }
+
+    it('does not grow over the question: the text has a limited height and scrolls inside the bubble', async () => {
+      await show({ botLine: LONG, botLineId: 4, botLineSticky: true });
+      const text = within(screen.getByTestId('bot-bubble')).getByRole('status');
+      expect(text).toHaveTextContent(LONG);
+      // Measured in a browser at 360x640: the bubble was 387 px tall and lay on the question and the picture.
+      expect(text.className).toMatch(/\bmax-h-\[max\(9rem,30dvh\)\]/);
+      expect(text.className.split(' ')).toContain('overflow-y-auto');
+    });
+
+    it('shows that there is more, and a tap on the arrow scrolls on', async () => {
+      await show({ botLine: LONG, botLineId: 4, botLineSticky: true });
+      const bubble = screen.getByTestId('bot-bubble');
+      const text = within(bubble).getByRole('status');
+      expect(within(bubble).queryByRole('button', { name: 'There is more below' })).toBeNull();
+      layOut(text);
+      const scrolled = vi.fn();
+      text.scrollBy = scrolled;
+      fireEvent.scroll(text);
+      await user.click(await within(bubble).findByRole('button', { name: 'There is more below' }));
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      // The line is still there: scrolling on is not closing.
+      expect(usePlaySession.getState().botLine).toBe(LONG);
+      // At the end of the text the arrow goes away.
+      layOut(text, 188);
+      fireEvent.scroll(text);
+      await waitFor(() => expect(within(bubble).queryByRole('button', { name: 'There is more below' })).toBeNull());
+    });
+
+    it('has no arrow for a short line', async () => {
+      await show({ botLine: 'Look closely at the picture.', botLineId: 3, botLineSticky: true });
+      expect(within(screen.getByTestId('bot-bubble')).queryByRole('button', { name: 'There is more below' })).toBeNull();
+    });
   });
 
   it('offers help with two big buttons, and only offers', async () => {
@@ -347,6 +529,75 @@ describe('HelperBot: talking to Pip', () => {
     await user.click(screen.getByRole('button', { name: 'Talk to Pip' }));
     await waitFor(() => expect(actions.askBot).toHaveBeenCalledWith('why is the sky blue'));
     expect(voiceMock.listenOnce).toHaveBeenCalledTimes(1);
+  });
+
+  describe('the microphone closes with the panel', () => {
+    /** A recording that goes on until the test ends it (a short tap keeps listening). */
+    function openRecording(): { say: (text: string) => void } {
+      let settle: (text: string) => void = () => undefined;
+      voiceMock.listenOnce.mockImplementation(() => new Promise<string>((resolve) => (settle = resolve)));
+      return { say: (text) => settle(text) };
+    }
+
+    it('stops listening when the panel is closed, and drops what was heard afterwards', async () => {
+      const recording = openRecording();
+      await user.click(await show({ controls: controls({ microphone: true }) }));
+      await user.click(screen.getByRole('button', { name: 'Talk to Pip' }));
+      expect(voiceMock.listenOnce).toHaveBeenCalledTimes(1);
+      expect(voiceMock.cancelListening).not.toHaveBeenCalled();
+
+      // A tap anywhere outside the panel closes it.
+      await user.click(document.body);
+      await waitFor(() => expect(screen.queryByTestId('bot-panel')).toBeNull());
+      expect(voiceMock.cancelListening).toHaveBeenCalled();
+
+      // Whatever the room said after that never reaches the tutor.
+      await act(async () => {
+        recording.say('something said in the room after Pip was put away');
+        await Promise.resolve();
+      });
+      expect(actions.askBot).not.toHaveBeenCalled();
+    });
+
+    it('stops listening when the next challenge arrives', async () => {
+      const recording = openRecording();
+      await user.click(await show({ controls: controls({ microphone: true }) }));
+      await user.click(screen.getByRole('button', { name: 'Talk to Pip' }));
+      set({ challenge: makeRecord(CHILD, makeContent(CHOICE)) });
+      await waitFor(() => expect(screen.queryByTestId('bot-panel')).toBeNull());
+      expect(voiceMock.cancelListening).toHaveBeenCalled();
+      await act(async () => {
+        recording.say('too late');
+        await Promise.resolve();
+      });
+      expect(actions.askBot).not.toHaveBeenCalled();
+    });
+
+    it('stops listening when Pip leaves the screen', async () => {
+      openRecording();
+      await user.click(await show({ controls: controls({ microphone: true }) }));
+      await user.click(screen.getByRole('button', { name: 'Talk to Pip' }));
+      cleanup();
+      expect(voiceMock.cancelListening).toHaveBeenCalled();
+    });
+
+    it('does not touch the microphone when nothing is being recorded', async () => {
+      await user.click(await show({ controls: controls({ microphone: true }) }));
+      await user.click(document.body);
+      await waitFor(() => expect(screen.queryByTestId('bot-panel')).toBeNull());
+      cleanup();
+      expect(voiceMock.cancelListening).not.toHaveBeenCalled();
+    });
+
+    it('keeps the pointer on the mic button while it is held, so letting go anywhere ends the recording', async () => {
+      openRecording();
+      await user.click(await show({ controls: controls({ microphone: true }) }));
+      const mic = screen.getByRole('button', { name: 'Talk to Pip' });
+      const capture = vi.fn();
+      mic.setPointerCapture = capture;
+      fireEvent.pointerDown(mic, { pointerId: 7, pointerType: 'mouse', button: 0 });
+      expect(capture).toHaveBeenCalledWith(7);
+    });
   });
 
   it('says so kindly when it could not hear', async () => {

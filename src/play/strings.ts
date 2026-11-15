@@ -35,6 +35,8 @@ const en: Record<string, string> = {
   'play.story.end': 'The End',
 
   'play.fixbot.intro': 'Uh-oh! I think I made a mistake. Can you spot it?',
+  'play.finishFirst': 'Let us finish this one first. Then we go where you wanted!',
+  'play.studio.readyMade': 'I could not paint your idea this time. Here is a puzzle I had ready!',
 
   'play.wrong.1': 'Good try! Look again and have another go.',
   'play.wrong.2': 'Not quite yet, and that is okay. Try once more.',
@@ -71,6 +73,7 @@ const en: Record<string, string> = {
   'play.teach.reply': 'Pip says',
 
   'play.saving': 'Counting your stars...',
+  'play.sheet.more': 'There is more below',
   'play.rewards.stars.one': 'You earned {count} star!',
   'play.rewards.stars.other': 'You earned {count} stars!',
   'play.reward.star.independent': 'You worked it out all on your own!',
@@ -133,6 +136,8 @@ const es: Record<string, string> = {
   'play.story.end': 'Fin',
 
   'play.fixbot.intro': '¡Ay! Creo que me equivoqué. ¿Puedes encontrar el error?',
+  'play.finishFirst': 'Primero terminamos este. ¡Después vamos a donde querías!',
+  'play.studio.readyMade': 'Esta vez no pude pintar tu idea. ¡Aquí tienes un reto que ya tenía listo!',
 
   'play.wrong.1': '¡Buen intento! Mira otra vez y prueba de nuevo.',
   'play.wrong.2': 'Todavía no, y no pasa nada. Prueba una vez más.',
@@ -169,6 +174,7 @@ const es: Record<string, string> = {
   'play.teach.reply': 'Pip dice',
 
   'play.saving': 'Contando tus estrellas...',
+  'play.sheet.more': 'Hay más abajo',
   'play.rewards.stars.one': '¡Ganaste {count} estrella!',
   'play.rewards.stars.other': '¡Ganaste {count} estrellas!',
   'play.reward.star.independent': '¡Lo resolviste por tu cuenta!',
@@ -231,6 +237,8 @@ const hi: Record<string, string> = {
   'play.story.end': 'समाप्त',
 
   'play.fixbot.intro': 'अरे! लगता है मुझसे गलती हो गई। क्या तुम उसे ढूँढ सकते हो?',
+  'play.finishFirst': 'पहले इसे पूरा करते हैं। फिर वहीं चलेंगे जहाँ तुम जाना चाहते थे!',
+  'play.studio.readyMade': 'इस बार तुम्हारा आइडिया नहीं बन पाया। यह रही एक तैयार पहेली!',
 
   'play.wrong.1': 'अच्छी कोशिश! फिर से देखो और दोबारा कोशिश करो।',
   'play.wrong.2': 'अभी नहीं हुआ, और यह बिल्कुल ठीक है। एक बार और कोशिश करो।',
@@ -267,6 +275,7 @@ const hi: Record<string, string> = {
   'play.teach.reply': 'पिप कहता है',
 
   'play.saving': 'तुम्हारे सितारे गिन रहे हैं...',
+  'play.sheet.more': 'नीचे और भी है',
   'play.rewards.stars.one': 'तुम्हें {count} सितारा मिला!',
   'play.rewards.stars.other': 'तुम्हें {count} सितारे मिले!',
   'play.reward.star.independent': 'तुमने इसे खुद ही हल किया!',

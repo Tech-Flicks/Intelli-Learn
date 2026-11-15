@@ -313,6 +313,29 @@ describe('normalizeChallenge', () => {
     expect(validateChallengeContent(out)).toEqual([]);
   });
 
+  it('raises a robot block limit that the shortest solution does not fit in', () => {
+    // Five blocks are needed (forward x5, no repeat block on offer); the author counted two.
+    const tight = makeChallenge({ ...ROBOT, cols: 6, goal: { x: 5, y: 0 }, allowed: ['forward', 'left', 'right'], maxCommands: 2 });
+    expect(validateChallengeContent(tight).join(' ')).toContain('needs 5 blocks but maxCommands is 2');
+    const out = normalizeChallenge(tight);
+    expect(out.interaction).toMatchObject({ maxCommands: 7 });
+    expect(validateChallengeContent(out)).toEqual([]);
+    // Doing it again changes nothing.
+    expect(normalizeChallenge(out)).toEqual(out);
+  });
+
+  it('leaves a robot block limit alone when the solution fits, and a maze that cannot be solved to the validator', () => {
+    const fits = makeChallenge({ ...ROBOT, cols: 6, goal: { x: 5, y: 0 }, maxCommands: 2 }); // one repeat block around one forward
+    expect(normalizeChallenge(fits).interaction).toMatchObject({ maxCommands: 2 });
+    const roomy = makeChallenge({ ...ROBOT, maxCommands: 20 });
+    expect(normalizeChallenge(roomy).interaction).toMatchObject({ maxCommands: 20 });
+
+    const walledIn = makeChallenge({ ...ROBOT, maxCommands: 2, walls: [{ x: 2, y: 0 }, { x: 2, y: 1 }, { x: 2, y: 2 }] });
+    const out = normalizeChallenge(walledIn);
+    expect(out.interaction).toMatchObject({ maxCommands: 2 });
+    expect(validateChallengeContent(out).join(' ')).toContain('cannot be solved');
+  });
+
   it('removes duplicate choice correct ids', () => {
     const out = normalizeChallenge(makeChallenge({ ...CHOICE, correctIds: ['b', 'b'] }));
     expect(out.interaction).toMatchObject({ correctIds: ['b'] });

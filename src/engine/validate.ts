@@ -14,6 +14,7 @@ import type {
   OrderInteraction,
   RobotInteraction,
   Scene,
+  SceneObject,
   SortInteraction,
   TapInteraction,
   TeachBack,
@@ -92,13 +93,43 @@ function validateChoice(i: ChoiceInteraction, problems: string[]): void {
   if (new Set(looks).size !== looks.length) problems.push('two choice options look exactly the same');
 }
 
+/** Everything about a scene object that a child can see, apart from where it is. */
+function lookOf(obj: SceneObject): string {
+  const drawn = obj.type === 'emoji' ? obj.emoji : obj.type === 'shape' ? obj.shape : obj.type === 'text' ? obj.text : obj.svg;
+  return JSON.stringify([
+    obj.type,
+    (drawn ?? '').trim(),
+    (obj.color ?? '').toLowerCase(),
+    (obj.label ?? '').trim().toLowerCase(),
+    obj.size,
+    ((obj.rotation % 360) + 360) % 360,
+  ]);
+}
+
 function validateTap(i: TapInteraction, scene: Scene, problems: string[]): void {
   reportDuplicates(problems, 'tap targetIds', i.targetIds);
   const byId = new Map(scene.objects.map((o) => [o.id, o]));
-  for (const id of new Set(i.targetIds)) {
+  const targets = new Set(i.targetIds);
+  for (const id of targets) {
     const obj = byId.get(id);
     if (!obj) problems.push(`tap target "${id}" is not an object in the scene`);
     else if (!obj.tappable) problems.push(`tap target "${id}" is not tappable`);
+  }
+  // Answers are compared by id. "Tap 3 apples" with five identical apples, three of them the
+  // targets, marks a child wrong for tapping the other apples: nothing shows which ones count.
+  const others = new Map<string, string>();
+  for (const obj of scene.objects) {
+    if (obj.tappable && !targets.has(obj.id)) others.set(lookOf(obj), obj.id);
+  }
+  for (const id of targets) {
+    const obj = byId.get(id);
+    const twin = obj ? others.get(lookOf(obj)) : undefined;
+    if (twin !== undefined) {
+      problems.push(
+        `tap target "${id}" looks exactly like "${twin}", which can be tapped but is not a target: make every look-alike a target, or make the objects look different`,
+      );
+      break;
+    }
   }
 }
 
@@ -121,6 +152,17 @@ function validateSort(i: SortInteraction, problems: string[]): void {
   }
   const binLooks = i.bins.map((b) => signatureOf(b));
   if (new Set(binLooks).size !== binLooks.length) problems.push('two sort bins look exactly the same');
+  // Two cards a child cannot tell apart must not need different bins.
+  const binByLook = new Map<string, string>();
+  for (const item of i.items) {
+    const look = signatureOf(item);
+    const earlier = binByLook.get(look);
+    if (earlier !== undefined && earlier !== item.binId) {
+      problems.push(`two sort items look exactly the same but belong in different bins ("${item.label}")`);
+      break;
+    }
+    binByLook.set(look, item.binId);
+  }
 }
 
 function validateMatch(i: MatchInteraction, problems: string[]): void {
@@ -168,13 +210,49 @@ export function numbersInText(text: string): number[] {
   return out;
 }
 
-function validateNumber(i: NumberInteraction, hints: readonly string[], problems: string[]): void {
+/** A tolerance may be at most this share of the answer ... */
+const MAX_TOLERANCE_SHARE = 0.1;
+/** ... a whole-number answer below this is counted or calculated, never estimated: it is exact ... */
+const EXACT_BELOW = 20;
+/** ... and a decimal answer always has this much slack for rounding. */
+const DECIMAL_SLACK = 0.05;
+
+/**
+ * The widest tolerance that still tells a right answer from a wrong one. On a keypad without a
+ * decimal point only whole numbers can be typed, so less than 1 changes nothing there.
+ */
+function maxTolerance(i: NumberInteraction): number {
+  const share = Math.abs(i.answer) * MAX_TOLERANCE_SHARE;
+  if (i.allowDecimal) return Math.max(share, DECIMAL_SLACK);
+  if (Number.isInteger(i.answer) && Math.abs(i.answer) < EXACT_BELOW) return 0.999;
+  return Math.max(share, 0.999);
+}
+
+/**
+ * True when the text states the number as a result ("= 4", "leaves 4", "the answer is 4",
+ * "4 are left") and does not merely mention it. For a number that the question itself gives.
+ */
+function statesAsResult(text: string, value: number): boolean {
+  const cleaned = text.toLowerCase().replace(/(\d),(?=\d{3}(?!\d))/g, '$1');
+  const n = String(value).replace('.', '\\.');
+  const number = `(?<![\\d.])${n}(?!\\.?\\d)`;
+  const lead = '(?:=\\s*|\\b(?:equals?|makes?|leaves?|gives?|gets?|answer(?:\\s+is)?|total(?:\\s+is)?|igual\\s+a|quedan?|sobran?|respuesta(?:\\s+es)?|resultado(?:\\s+es)?)\\s+)';
+  const tail = '\\s+(?:[a-z]+\\s+){0,2}(?:left|remain(?:s|ing)?)\\b';
+  return new RegExp(`${lead}${number}`).test(cleaned) || new RegExp(`${number}${tail}`).test(cleaned);
+}
+
+function validateNumber(i: NumberInteraction, hints: readonly string[], asked: string, problems: string[]): void {
   if (!Number.isFinite(i.answer)) {
     problems.push('the number answer is not a finite number');
     return;
   }
   if (!Number.isFinite(i.tolerance) || i.tolerance < 0) problems.push('the number tolerance must be zero or more');
   const tolerance = Number.isFinite(i.tolerance) && i.tolerance > 0 ? i.tolerance : 0;
+  if (tolerance > maxTolerance(i)) {
+    problems.push(
+      `the number tolerance (${tolerance}) is too wide for the answer ${i.answer}: wrong answers would be marked right. Use 0 for an exact answer and a small tolerance only for measuring or estimating`,
+    );
+  }
   if (i.answer < 0 && !i.allowNegative && i.answer + tolerance < 0) {
     problems.push('the number answer is negative but the keypad has no minus sign (allowNegative is false)');
   }
@@ -187,8 +265,13 @@ function validateNumber(i: NumberInteraction, hints: readonly string[], problems
   if (Math.abs(i.answer) >= 1e9) problems.push('the number answer is too long to type on the keypad');
   const decimals = String(i.answer).split('.')[1]?.length ?? 0;
   if (decimals > 3 && tolerance === 0) problems.push('the number answer needs more than 3 decimal places');
+  // A hint may repeat a number that the question gives ("8 birds, 4 fly away": answer 4, hint
+  // "take away 4"). It must not name a number the question does not give, or state the result.
+  const target = Math.abs(i.answer);
+  const given = numbersInText(asked).includes(target);
   hints.forEach((hint, index) => {
-    if (numbersInText(hint).some((n) => n === Math.abs(i.answer))) {
+    if (!numbersInText(hint).includes(target)) return;
+    if (!given || statesAsResult(hint, target)) {
       problems.push(`hint ${index + 1} gives away the exact answer (${i.answer})`);
     }
   });
@@ -290,7 +373,7 @@ export function validateChallengeContent(c: Challenge): string[] {
         validateOrder(i, problems);
         break;
       case 'number':
-        validateNumber(i, c.hints, problems);
+        validateNumber(i, c.hints, `${c.intro} ${c.question}`, problems);
         break;
       case 'robot':
         validateRobot(i, problems);
