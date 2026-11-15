@@ -19,6 +19,7 @@ import {
   LIBRARY_ROW_SCHEMA,
   type ChildTableName,
 } from './backupSchemas';
+import { deleteChildKeyValues } from './children';
 import { CHILD_TABLES, db, updateSettings } from './db';
 
 export const BACKUP_APP = 'intelli-learn';
@@ -290,8 +291,10 @@ export async function importBackup(file: unknown, mode: 'merge' | 'replace'): Pr
   const backup = parseBackup(file);
   const childTables = CHILD_TABLES.map((name) => db.table<ChildRow>(name));
 
-  return db.transaction('rw', [db.settings, db.children, db.library, ...childTables], async () => {
+  return db.transaction('rw', [db.settings, db.children, db.library, db.kv, ...childTables], async () => {
     if (mode === 'replace') {
+      // Cached per-child state (placement estimates, badge counters) belongs to the data that is removed.
+      await deleteChildKeyValues(await db.children.toCollection().primaryKeys());
       await db.children.clear();
       for (const table of childTables) await table.clear();
     }

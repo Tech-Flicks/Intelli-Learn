@@ -83,6 +83,13 @@ const FRACTION_NAMES: Record<string, string> = {
   '3/4': 'three quarters',
 };
 
+/** 3/8 -> "3 eighths"; unusual denominators are read as "3 over 17". */
+function fractionWords(top: number, bottom: number): string {
+  if (bottom < 2 || bottom > 100) return `${top} over ${bottom}`;
+  const name = bottom === 2 ? (top === 1 ? 'half' : 'halves') : `${ordinalWord(bottom)}${top === 1 ? '' : 's'}`;
+  return `${top} ${name}`;
+}
+
 const EMOJI = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}\u{1F3FB}-\u{1F3FF}]/gu;
 
 /** Removes emoji and pictographs. */
@@ -104,7 +111,7 @@ export function speakable(text: string): string {
   out = out.replace(/√\s*/g, 'the square root of ');
   out = out.replace(/(\w)\s*\^\s*(-?\d+)/g, '$1 to the power of $2');
   out = out.replace(/(\d)\s*%/g, '$1 percent').replace(/%/g, ' percent ');
-  out = out.replace(/\b(\d+)\/(\d+)\b/g, (match, a: string, b: string) => FRACTION_NAMES[match] ?? `${a} over ${b}`);
+  out = out.replace(/\b(\d+)\/(\d+)\b/g, (match, a: string, b: string) => FRACTION_NAMES[match] ?? fractionWords(Number(a), Number(b)));
   out = out.replace(/(^|[\s(=+×÷*/<>-])[-−](\d)/g, '$1minus $2');
   out = out.replace(/\s*[×✕]\s*/g, ' times ').replace(/(\d)\s*[x*]\s*(?=\d)/g, '$1 times ');
   out = out.replace(/\s*÷\s*/g, ' divided by ');
@@ -119,6 +126,8 @@ export function speakable(text: string): string {
   out = out.replace(/(^|\s)\?(?=\s|$)/g, '$1what number');
   out = out.replace(/&/g, ' and ').replace(/\//g, ' or ').replace(/[*#@|~^_{}[\]()"“”]/g, ' ');
   out = out.replace(/\b(\d+)(?:st|nd|rd|th)\b/g, (_m, n: string) => ordinalWord(Number(n)));
+  // A number right before a single letter is a coefficient: "5x" is read as "5 x".
+  out = out.replace(/(\d)([a-zA-Z])\b/g, '$1 $2');
   out = out.replace(/-?\d+(?:\.\d+)?/g, (match) => {
     const value = Number(match);
     return Number.isFinite(value) && Math.abs(value) < 1e12 ? numberWords(value) : match;

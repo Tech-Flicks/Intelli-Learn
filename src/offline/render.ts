@@ -371,7 +371,7 @@ function pairChoice(ctx: Ctx, set: PairSet): Challenge | null {
       labelled(asked.right),
       wrong.map((w) => ({ ...labelled(w.right), misconception: `${cap(w.right.label)} goes with ${w.left.label}.` })),
     ),
-    hints: [set.hint, `It is not ${(wrong[0] as Pair).right.label}.`],
+    hints: [set.hint, ctx.young ? `It is not "${(wrong[0] as Pair).right.label}".` : `One wrong answer is "${(wrong[0] as Pair).right.label}". Cross it out and look at the rest.`],
     walkthrough: pairSteps(ctx, asked),
     scene: illustrate(set, asked.left.emoji ? [asked.left, ...ctx.rng.shuffle([asked.right, ...wrong.map((w) => w.right)])] : ctx.rng.shuffle([asked.right, ...wrong.map((w) => w.right)])),
   });
@@ -388,7 +388,7 @@ function pairTap(ctx: Ctx, set: PairSet): Challenge | null {
     intro: say(lead(ctx), set.intro),
     question: fill(set.tapQ, asked.left.label),
     interaction: { kind: 'tap', targetIds: [ids[cards.findIndex((c) => c.hit)] as string] },
-    hints: [set.hint, `It is not ${(wrong[0] as Pair).right.label}.`],
+    hints: [set.hint, ctx.young ? `It is not "${(wrong[0] as Pair).right.label}".` : `One wrong answer is "${(wrong[0] as Pair).right.label}". Cross it out and look at the rest.`],
     walkthrough: pairSteps(ctx, asked),
     scene: cardScene(set.scene, cards.map((c, index) => cardOf(c.p.right, ids[index] as string, true))),
   });
@@ -447,7 +447,10 @@ function endPhrase(word: string): string {
 }
 const withArticle = (set: SeqSet, label: string): string => {
   const article = set.article ?? 'the';
-  return article === '' ? label : `${article} ${label}`;
+  if (article === '') return label;
+  // "an hour", "an ant", but "a unit".
+  const an = article === 'a' && (/^(?:[aeio]|hour|honest|u(?![ns]i|se))/i.test(label));
+  return `${an ? 'an' : article} ${label}`;
 };
 
 function seqOrder(ctx: Ctx, set: SeqSet): Challenge | null {

@@ -1,0 +1,30 @@
+# Keep the build context small and keep secrets out of it.
+.git
+.github
+.gitignore
+node_modules
+dist
+dev-dist
+coverage
+test-results
+playwright-report
+android
+
+# Secrets and local settings never enter an image.
+.env
+.env.*
+*.local
+
+# Not needed to build the web app.
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker/Caddyfile
+server
+tools
+e2e
+design
+docs
+*.md
+capacitor.config.json
+.DS_Store

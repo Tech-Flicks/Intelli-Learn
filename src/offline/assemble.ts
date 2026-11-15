@@ -42,9 +42,20 @@ export function teachBackOf(teach: Teach, order: readonly number[]): { prompt: s
   return { prompt: clip(prompt, 200), options };
 }
 
+function firstSentence(text: string): string {
+  const match = text.trim().match(/^.*?[.!?](?=\s|$)/);
+  return match ? match[0] : text.trim();
+}
+
 /** Builds and validates the challenge. Throws when the parts do not form a valid challenge. */
 export function assemble(ctx: Ctx, parts: Parts): Challenge {
-  const steps = parts.walkthrough.map((s) => s.trim()).filter((s) => s !== '');
+  let steps = parts.walkthrough.map((s) => s.trim()).filter((s) => s !== '');
+  let explanation = parts.explanation;
+  if (ctx.young) {
+    // Pre-K and Kindergarten: one short sentence per text.
+    explanation = firstSentence(explanation);
+    steps = steps.map(firstSentence).filter((s) => s.split(/\s+/).length <= 16);
+  }
   while (steps.length < 2) steps.push('Check your answer one more time.');
   if (steps.length > 6) {
     const tail = steps.splice(5).join(' ');
@@ -61,7 +72,7 @@ export function assemble(ctx: Ctx, parts: Parts): Challenge {
     interaction: parts.interaction,
     hints: [clip(parts.hints[0], 240), clip(parts.hints[1], 300)],
     walkthrough: steps.map((s) => clip(s, 240)),
-    explanation: clip(parts.explanation, 400),
+    explanation: clip(explanation, 400),
     ...(parts.teach
       ? { teachBack: teachBackOf(parts.teach, ctx.rng.shuffle(Array.from({ length: teachCount }, (_v, i) => i))) }
       : {}),

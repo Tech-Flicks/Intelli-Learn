@@ -1,0 +1,100 @@
+# Intelli-Learn with Docker Compose.
+#
+#   docker compose up -d --build                      web app only, http://localhost:8080
+#   docker compose --profile proxy up -d --build      + AI proxy that keeps the API key on the server
+#   docker compose --profile https up -d --build      + Caddy for automatic HTTPS
+#   docker compose --profile proxy --profile https up -d --build
+#
+# Settings come from a file named .env next to this one (copy .env.example).
+# See docs/HOSTING.md for the full guide.
+
+name: intelli-learn
+
+services:
+  # The app itself: static files served by nginx as a non-root user.
+  web:
+    build: .
+    image: intelli-learn-web:local
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      # nginx pid file and temporary files (the only paths it writes to)
+      - /tmp:mode=1777,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+      - ai
+
+  # Optional: forwards AI requests and adds the API key on the server, so the
+  # key is never stored on a tablet. Not published to the host: only the web
+  # container can reach it, at /ai-proxy/ on the app's own address.
+  ai-proxy:
+    profiles: ["proxy"]
+    build: ./server/proxy
+    image: intelli-learn-ai-proxy:local
+    restart: unless-stopped
+    environment:
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-}
+      UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:-}
+      ALLOWED_MODELS: ${ALLOWED_MODELS:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Reverse proxies in front of ai-proxy that append X-Forwarded-For: nginx (1), or Caddy + nginx (2).
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+    expose:
+      - "8788"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    extra_hosts:
+      # Lets UPSTREAM_BASE_URL point at a model server on the Docker host,
+      # e.g. http://host.docker.internal:11434/v1 for Ollama.
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ai
+
+  # Optional: HTTPS in front of the web container. Needed for the microphone,
+  # offline install and key encryption on any address other than localhost.
+  caddy:
+    profiles: ["https"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and Caddy's own certificate authority. Keep this volume.
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - default
+
+networks:
+  default: {}
+  # Shared by web and ai-proxy only.
+  ai: {}
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

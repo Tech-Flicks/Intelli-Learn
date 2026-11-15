@@ -141,7 +141,10 @@ function normalizeScene(scene: Scene, interaction: Interaction): { scene: Scene;
     for (const obj of cleaned) if (targets.has(obj.id)) obj.tappable = true;
     const targetCount = cleaned.filter((o) => targets.has(o.id)).length;
     let distractors = cleaned.filter((o) => o.tappable && !targets.has(o.id)).length;
-    if (distractors < targetCount) {
+    // Only a scene with no distractor at all is repaired. When the author already marked some
+    // objects as wrong choices, the rest is decoration on purpose: promoting it could turn a
+    // decoration that happens to fit the question (a fruit in "tap every fruit") into a trap.
+    if (distractors === 0) {
       // Promote existing objects, pictures before text, biggest first. Nothing is invented.
       const candidates = cleaned
         .filter((o) => !o.tappable && !targets.has(o.id))

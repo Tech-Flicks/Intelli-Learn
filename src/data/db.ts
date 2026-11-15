@@ -89,12 +89,23 @@ export const CHILD_TABLES = [
   'weeklyReports',
 ] as const;
 
-/** Reads the settings record, creating it with defaults on first use. */
+/**
+ * Reads the settings record, creating it with defaults on first use.
+ *
+ * Safe inside `useLiveQuery` / `liveQuery`: Dexie refuses every write there, so on a device
+ * that has no settings yet the defaults are returned without being stored. The app shell
+ * calls `getSettings()` once at start-up, outside any live query, which stores the record
+ * and makes the live queries run again.
+ */
 export async function getSettings(): Promise<Settings> {
   const existing = await db.settings.get('app');
   if (existing) return existing;
   const fresh = defaultSettings();
-  await db.settings.put(fresh);
+  try {
+    await db.settings.put(fresh);
+  } catch (error) {
+    if ((error as { name?: unknown } | null)?.name !== 'ReadOnlyError') throw error;
+  }
   return fresh;
 }
 

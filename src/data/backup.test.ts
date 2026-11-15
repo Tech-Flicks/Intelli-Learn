@@ -224,6 +224,22 @@ describe('importBackup', () => {
     expect((await db.library.get('lib-both'))?.seenBy).toEqual([mira.id]);
   });
 
+  it('replace drops the per-child cache entries in kv, but never the device key', async () => {
+    const { mira, leo } = await seedDevice();
+    const file = throughJson(await exportBackup({ childId: mira.id })) as BackupFile;
+    await db.kv.bulkPut([
+      { key: 'device-key', value: 'secret' },
+      { key: `progression:placement:${mira.id}`, value: 1 },
+      { key: `progression:counters:${leo.id}`, value: 2 },
+    ]);
+
+    await importBackup(file, 'merge');
+    expect(await db.kv.count()).toBe(3);
+
+    await importBackup(file, 'replace');
+    expect(await db.kv.toCollection().primaryKeys()).toEqual(['device-key']);
+  });
+
   it('ignores an auth record and an API key smuggled into the file', async () => {
     await seedDevice();
     const file = throughJson(await exportBackup()) as BackupFile;

@@ -3,6 +3,7 @@
  * would notice. Used as a safety net when picking offline content, and by the tests.
  */
 import type { BuildInteraction, Challenge, RobotInteraction } from '@/core/schemas';
+import { numberWords } from './speak';
 
 type Move = 'forward' | 'left' | 'right';
 const DIRS = ['up', 'right', 'down', 'left'] as const;
@@ -198,6 +199,12 @@ export function problemsOf(c: Challenge): string[] {
       if ((String(i.answer).split('.')[1]?.length ?? 0) > 3) problems.push('the number answer has more than 3 decimal places');
       c.hints.forEach((hint, index) => {
         if (numbersIn(hint).includes(Math.abs(i.answer))) problems.push(`hint ${index + 1} states the answer`);
+        // Small numbers such as "one" and "two" are ordinary words, so only bigger answers are checked as words.
+        if (Number.isInteger(i.answer) && i.answer >= 3 && i.answer <= 999) {
+          const word = numberWords(i.answer).toLowerCase();
+          const spoken = ` ${hint.toLowerCase().replace(/[^a-z-]+/g, ' ')} `;
+          if (spoken.includes(` ${word} `)) problems.push(`hint ${index + 1} states the answer in words`);
+        }
       });
       break;
     }

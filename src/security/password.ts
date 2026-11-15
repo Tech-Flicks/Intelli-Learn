@@ -11,7 +11,7 @@
  */
 import type { AdminAuth, Settings } from '@/core/types';
 import { getSettings, updateSettings } from '@/data';
-import { base64ToBytes, bytesToBase64, constantTimeEqual, randomBytes } from './encoding';
+import { base64ToBytes, bytesToBase64, constantTimeEqual, randomBytes, requireCrypto } from './encoding';
 
 export const PASSWORD_MIN_LENGTH = 6;
 export const PASSWORD_MAX_LENGTH = 128;
@@ -58,6 +58,7 @@ function isLocked(auth: AdminAuth, now: number): boolean {
 }
 
 async function derive(password: string, salt: Uint8Array<ArrayBuffer>, iterations: number): Promise<Uint8Array> {
+  requireCrypto();
   // NFKC so the same password typed on different keyboards or devices gives the same bytes.
   const material = new TextEncoder().encode(password.normalize('NFKC'));
   const key = await crypto.subtle.importKey('raw', material, 'PBKDF2', false, ['deriveBits']);

@@ -12,5 +12,7 @@ export { SceneCanvas } from './scene/SceneCanvas';
 export type { SceneCanvasProps } from './scene/SceneCanvas';
 export { ChallengeStage } from './ChallengeStage';
 export type { ChallengeStageProps, StageLabels } from './ChallengeStage';
+/** The built-in English texts. Translations live in `@/i18n` (`stageLabels()`), which is tested against these. */
+export { DEFAULT_LABELS as DEFAULT_STAGE_LABELS } from './widgets/common';
 export { EngineGallery } from './EngineGallery';
 export { SAMPLE_CHALLENGES } from './samples';

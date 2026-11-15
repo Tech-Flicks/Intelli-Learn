@@ -236,7 +236,7 @@ export function robotChallenge(ctx: Ctx): Challenge | null {
       scene: cardScene(ctx.theme.scene, cards),
     });
   }
-  const task = gemCount > 0 ? `to the ${goal}, collecting ${gemCount === 1 ? 'the gem' : `all ${numberWords(gemCount)} gems`} on the way` : `to the ${goal}`;
+  const task = gemCount > 0 ? `to the ${goal}, collecting ${gemCount === 1 ? 'the gem' : gemCount === 2 ? 'both gems' : `all ${numberWords(gemCount)} gems`} on the way` : `to the ${goal}`;
   return assemble(ctx, {
     title,
     intro: say(lead(ctx), debugging ? `The last program made the ${mover} bump into a wall. It needs a program that works.` : `The ${mover} must find a way to the ${goal}.`),

@@ -60,7 +60,7 @@ const SCENARIOS: readonly Scenario[] = [
     thing: 'a bee garden', goal: 'a garden that feeds {n} bees', power: 'bees fed', cost: 'coins',
     intro: 'The bees need a garden full of flowers.', scene: 'farm', icon: '🐝',
     parts: parts('daisy|🌼; tulip|🌷; rose|🌹; herb pot|🌿; sunflower|🌻; cherry tree|🌸; apple tree|🌳'),
-    fun: 'Bees pollinate about one third of the food crops people eat.',
+    fun: 'Bees and other pollinators help grow about one third of the food people eat.',
   },
   {
     key: 'party', themes: ['toys', 'art', 'fairy tales', 'music'], strands: ['math'],
@@ -201,7 +201,7 @@ export function buildChallenge(ctx: Ctx): Challenge | null {
     ];
     const scene = cardScene(scenario.scene, cards);
     const teach = ['Why not just pick the strongest part?', 'It costs more than the budget allows.', 'It is the wrong color.', 'Strong parts are never useful.'] as const;
-    const title = `${cap(scenario.thing.replace(/^an? /, ''))} Builder`;
+    const title = `${scenario.thing.replace(/^an? /, '').split(' ').map((word) => (word === 'of' ? word : cap(word))).join(' ')} Builder`;
 
     if (ctx.young) {
       return assemble(ctx, {

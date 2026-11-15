@@ -7,6 +7,11 @@ describe('grades', () => {
     expect(makeStage('3', 'strong')).toBe(4 * 4 + 2);
     expect(makeStage('8', 'ready')).toBe(MAX_STAGE);
   });
+  it('treats an unknown step or grade as the lowest one instead of slipping a grade down', () => {
+    // Values like these can arrive from storage or from an untyped caller.
+    expect(makeStage('3', 'mastered' as never)).toBe(makeStage('3', 'starting'));
+    expect(makeStage('9' as never, 'growing')).toBe(makeStage('PK', 'growing'));
+  });
   it('decodes a stage value', () => {
     const s = makeStage('3', 'strong');
     expect(stageGrade(s)).toBe('3');

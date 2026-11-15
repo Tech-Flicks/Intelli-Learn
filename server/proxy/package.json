@@ -1,0 +1,14 @@
+{
+  "name": "intelli-learn-ai-proxy",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Optional same-origin AI proxy for Intelli-Learn. Keeps the API key on the server. No dependencies.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

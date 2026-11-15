@@ -22,3 +22,5 @@ export { encryptSecret, decryptSecret, setApiKey, getApiKey, hasApiKey } from '.
 
 export { useParentGate, PARENT_IDLE_LOCK_MS, PARENT_HIDDEN_LOCK_MS } from './gate';
 export type { ParentGateState } from './gate';
+
+export { cryptoAvailable, INSECURE_CONTEXT_MESSAGE } from './encoding';

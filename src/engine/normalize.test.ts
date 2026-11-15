@@ -134,6 +134,13 @@ describe('normalizeChallenge', () => {
     expect(objectsOf(out).find((o) => o.id === 'sun')?.tappable).toBe(false);
   });
 
+  it('does not turn decoration into choices when the scene already has a distractor', () => {
+    // Two targets, one distractor: fewer distractors than targets is a deliberate design ("tap every apple").
+    const out = normalizeChallenge(makeChallenge({ kind: 'tap', targetIds: ['apple1', 'apple2'] }, { scene: TAP_SCENE }));
+    expect(objectsOf(out).filter((o) => o.tappable).map((o) => o.id)).toEqual(['apple1', 'apple2', 'pear']);
+    expect(objectsOf(out).find((o) => o.id === 'sun')?.tappable).toBe(false);
+  });
+
   it('clamps coordinates and fills in default sizes', () => {
     const base = makeChallenge(CHOICE, {
       scene: { objects: [{ id: 'a', type: 'emoji', emoji: '🍎', x: 10, y: 10 }] },

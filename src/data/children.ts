@@ -214,16 +214,31 @@ export async function updateChild(id: string, patch: Partial<ChildProfile>): Pro
 }
 
 /**
+ * Removes the small per-child entries other modules keep in `db.kv` (for example the
+ * progression module's placement estimates and badge counters). The convention is that
+ * such a key ends with `:${childId}`. Must run inside a transaction that includes `db.kv`,
+ * or on its own.
+ */
+export async function deleteChildKeyValues(childIds: readonly string[]): Promise<void> {
+  if (childIds.length === 0) return;
+  const suffixes = childIds.map((id) => `:${id}`);
+  const keys = (await db.kv.toCollection().primaryKeys()).filter((key) => suffixes.some((suffix) => key.endsWith(suffix)));
+  if (keys.length > 0) await db.kv.bulkDelete(keys);
+}
+
+/**
  * Removes the profile and every record about the child, in one transaction:
- * all rows in `CHILD_TABLES`, and the child's id in the "seen by" lists of the
- * shared canvas library (the canvases themselves stay for the other children).
+ * all rows in `CHILD_TABLES`, the per-child entries in `db.kv` (keys ending in
+ * `:${childId}`), and the child's id in the "seen by" lists of the shared
+ * canvas library (the canvases themselves stay for the other children).
  */
 export async function deleteChild(id: string): Promise<void> {
   const tables = CHILD_TABLES.map((name) => db.table(name));
-  await db.transaction('rw', [db.children, db.library, ...tables], async () => {
+  await db.transaction('rw', [db.children, db.library, db.kv, ...tables], async () => {
     for (const table of tables) {
       await table.where('childId').equals(id).delete();
     }
+    await deleteChildKeyValues([id]);
     await db.library
       .filter((item) => item.seenBy.includes(id))
       .modify((item) => {

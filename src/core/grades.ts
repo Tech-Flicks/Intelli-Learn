@@ -24,8 +24,13 @@ export function clampStage(stage: number): StageValue {
   return Math.max(MIN_STAGE, Math.min(MAX_STAGE, Math.round(stage)));
 }
 
+/**
+ * The stage for a grade and a step. A grade or step that is not one of the known values
+ * (possible when the value came from storage or an untyped caller) counts as the lowest
+ * one, so the result is always a valid stage and never slips into the grade below.
+ */
 export function makeStage(grade: Grade, step: StageStep = 'starting'): StageValue {
-  return gradeIndex(grade) * STEPS_PER_GRADE + STAGE_STEPS.indexOf(step);
+  return Math.max(0, gradeIndex(grade)) * STEPS_PER_GRADE + Math.max(0, STAGE_STEPS.indexOf(step));
 }
 
 export function stageGrade(stage: StageValue): Grade {

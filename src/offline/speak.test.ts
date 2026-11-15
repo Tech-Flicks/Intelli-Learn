@@ -40,7 +40,9 @@ describe('speakable', () => {
   });
   it('reads fractions, percents, powers and comparisons', () => {
     expect(speakable('1/2 of 8')).toBe('one half of eight');
-    expect(speakable('5/8')).toBe('five over eight');
+    expect(speakable('5/8')).toBe('five eighths');
+    expect(speakable('1/5 of 20')).toBe('one fifth of twenty');
+    expect(speakable('3x + 4 = 19')).toBe('three x plus four equals nineteen');
     expect(speakable('25% of 80')).toBe('twenty-five percent of eighty');
     expect(speakable('2^3')).toBe('two to the power of three');
     expect(speakable('5 > 3 and 2 < 4')).toBe('five is greater than three and two is less than four');

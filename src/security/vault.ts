@@ -11,7 +11,7 @@
  */
 import type { EncryptedBlob } from '@/core/types';
 import { db, getSettings, updateSettings } from '@/data';
-import { base64ToBytes, bytesToBase64, randomBytes } from './encoding';
+import { base64ToBytes, bytesToBase64, randomBytes, requireCrypto } from './encoding';
 
 export const DEVICE_KEY_ID = 'device-key';
 
@@ -81,6 +81,7 @@ function storeIfAbsent(candidate: CryptoKey | RawDeviceKey): Promise<CryptoKey |
 
 /** Returns the device key, creating it on first use. */
 async function loadDeviceKey(): Promise<CryptoKey> {
+  requireCrypto();
   const existing = await db.kv.get(DEVICE_KEY_ID);
   if (existing && isStoredKey(existing.value)) return toCryptoKey(existing.value);
 

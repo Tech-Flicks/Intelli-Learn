@@ -1,0 +1,43 @@
+# Caddy: automatic HTTPS in front of the Intelli-Learn web container.
+# Used by the "https" profile in docker-compose.yml.
+#
+# Browsers only allow the microphone, offline install (service worker) and the
+# encryption used for the parent's API key on a secure page. http://localhost
+# counts as secure; every other address needs HTTPS. Caddy provides it.
+#
+# Two settings come from .env (Caddy reads environment variables as {$NAME}):
+#
+#   SITE_ADDRESS  the one address people type, without "https://" and without a port.
+#                 Examples: learn.example.com | learn.home.arpa | 192.168.1.50 | localhost
+#
+#   CADDY_TLS     where the certificate comes from.
+#                 internal          Caddy acts as its own small certificate authority.
+#                                   This is the choice for a home network: it needs no
+#                                   domain name and no open ports to the internet.
+#                                   Each device must trust Caddy's root certificate once
+#                                   (see docs/HOSTING.md, "Trusting the certificate").
+#                 you@example.com   A public domain that points at this server.
+#                                   Caddy obtains and renews a free, publicly trusted
+#                                   certificate (Let's Encrypt). Ports 80 and 443 must be
+#                                   reachable from the internet. The address is used for
+#                                   expiry notices only.
+{
+	# Caddy runs in a container, so adding its certificate authority to the
+	# container's own trust store would help nobody. Devices trust it instead.
+	skip_install_trust
+
+	# A browser that opens the app by IP address (https://192.168.1.50) does not
+	# say which site it wants. This tells Caddy to answer with the site below.
+	default_sni {$SITE_ADDRESS:localhost}
+}
+
+{$SITE_ADDRESS:localhost} {
+	tls {$CADDY_TLS:internal}
+
+	encode zstd gzip
+
+	reverse_proxy web:8080 {
+		# Pass AI answers through as they arrive instead of buffering them.
+		flush_interval -1
+	}
+}

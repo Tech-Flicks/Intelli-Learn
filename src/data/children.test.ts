@@ -224,6 +224,21 @@ describe('deleteChild', () => {
     expect((await db.library.get('lib-2'))?.seenBy).toEqual(['someone-else']);
   });
 
+  it("removes the child's entries in the key-value store and leaves the device key and other children alone", async () => {
+    const mira = await createChild(input());
+    const leo = await createChild(input({ nickname: 'Leo' }));
+    await db.kv.bulkPut([
+      { key: 'device-key', value: 'secret' },
+      { key: `progression:placement:${mira.id}`, value: { answered: 3 } },
+      { key: `progression:counters:${mira.id}`, value: { solved: 9 } },
+      { key: `progression:counters:${leo.id}`, value: { solved: 2 } },
+    ]);
+
+    await deleteChild(mira.id);
+
+    expect((await db.kv.toCollection().primaryKeys()).sort()).toEqual(['device-key', `progression:counters:${leo.id}`].sort());
+  });
+
   it('is a no-op for an unknown child', async () => {
     const mira = await createChild(input());
     await deleteChild('nope');

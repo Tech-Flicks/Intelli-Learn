@@ -1,5 +1,24 @@
 /** Byte helpers shared by the password and vault code. */
 
+/** Shown when the browser gives this page no Web Crypto. Written for a parent to read. */
+export const INSECURE_CONTEXT_MESSAGE =
+  'This page is not opened securely, so the browser cannot protect the parent password or the API key. Open Intelli-Learn through an https address, or on the device itself (localhost).';
+
+/**
+ * Whether Web Crypto can be used. Browsers only offer it in a secure context: https, or
+ * localhost. A page opened as plain http from another device on the network has none.
+ * The setup wizard should check this first and explain instead of failing.
+ */
+export function cryptoAvailable(): boolean {
+  const api = (globalThis as { crypto?: Partial<Crypto> }).crypto;
+  return typeof api === 'object' && api !== null && typeof api.subtle === 'object' && api.subtle !== null && typeof api.getRandomValues === 'function';
+}
+
+/** Throws a readable error when Web Crypto is missing, instead of a "cannot read properties of undefined". */
+export function requireCrypto(): void {
+  if (!cryptoAvailable()) throw new Error(INSECURE_CONTEXT_MESSAGE);
+}
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   // Chunked so a large buffer never overflows the argument list of fromCharCode.

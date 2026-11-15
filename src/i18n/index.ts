@@ -34,3 +34,5 @@ export {
   stepName,
   strandName,
 } from './names';
+export { STAGE_LABEL_KEYS, STAGE_LABEL_STRINGS, stageLabels, useStageLabels } from './stageLabels';
+export type { StageLabelKey, StageLabelStrings } from './stageLabels';
