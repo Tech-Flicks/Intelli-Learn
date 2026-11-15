@@ -287,6 +287,16 @@ describe('other endpoints', () => {
     expect(reset.seq).toBe(7);
     expect((await (await fetch(`${root}/__mock/log`)).json()).requests).toEqual([]);
   });
+
+  it('remembers as many requests as logLimit says, newest last', async () => {
+    const own = await also({ logLimit: 2 });
+    for (const grade of ['K', '1', '2']) {
+      await chat(['TASK: challenge', 'INTERACTION_KIND: tap', `GRADE: ${grade}`, 'MODE: quest'], { base: own.baseUrl });
+    }
+    const root = own.baseUrl.replace(/\/v1$/, '');
+    const log = await (await fetch(`${root}/__mock/log`)).json();
+    expect(log.requests.map((request) => request.markers.GRADE)).toEqual(['1', '2']);
+  });
 });
 
 describe('options', () => {

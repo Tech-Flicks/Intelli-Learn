@@ -9,9 +9,10 @@ It is a local-first web app that can be installed on a tablet or computer. A
 parent sets it up behind a password. Everything a child does stays on the
 device for the parent to review. There are no accounts, no ads and no tracking.
 
-> **Status:** in active development. This README describes the design in
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), which is the source of truth
-> for what each module does.
+> **Status:** in active development. Everything listed under Features is built
+> and is played through in a real browser by the end-to-end tests.
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the source of truth for what
+> each module does.
 
 ## How it works
 
@@ -35,11 +36,16 @@ Three rules shape the app:
   Detective, Fix the Bot, Invention Workshop, Wonder of the Day, Imagination
   Studio and real-world missions.
 - Animated scenes drawn by the app from the AI's description.
-- A helper bot that reads aloud, gives a nudge, then a stronger hint, then a
-  step-by-step walkthrough. There is no skip button, and help never costs stars.
+- Pip, an animated helper robot that reads aloud, gives a nudge, then a
+  stronger hint, then a step-by-step walkthrough. There is no skip button, and
+  help never costs stars. After a walkthrough the child still answers, and the
+  next challenge is an easier one on the same idea.
 - "Teach it back" moments, where the child explains the idea to the helper.
-- Stars, badges, collectibles, streaks and a companion that grows. Rewards are
-  never taken away.
+- A breathing break when a child is guessing in a hurry, and a friendly rest
+  screen when the day's play time is used up. A challenge in progress is never
+  cut off.
+- Stars, badges, collectibles to buy with stars, streaks and a companion that
+  grows and can be named. Rewards are never taken away.
 - Optional voice: read-aloud, and a hold-to-talk microphone if a parent enables it.
 - Accessibility options: dyslexia-friendly font, large text, high contrast,
   calm mode with reduced motion, and automatic read-aloud.
@@ -50,8 +56,9 @@ Three rules shape the app:
   expectation for every grade where it applies (Pre-K, K, Grades 1 to 8).
 - Every grade has four steps: Starting, Growing, Strong, Ready for next grade.
   That gives 40 stages, so a level such as "Grade 3, Strong" is precise.
-- The parent sets the enrolled grade. A short placement finds the real starting
-  point per subject, which may be above or below it.
+- The parent sets the enrolled grade. A short placement game of eight
+  challenges finds the real starting point per subject, which may be above or
+  below it.
 - **Concept checks.** Doing well is not enough to move up. Before a level
   rises, the child gets a brand-new challenge on the same idea in a different
   format. Only solving that without hints raises the level.
@@ -101,9 +108,11 @@ first child profile.
 npm run mock-ai
 ```
 
-Then, in the parent area's AI settings, choose **Direct**, set the base URL to
-`http://localhost:8787/v1` and enter any text as the key. The mock returns
-valid, varied challenges for every interaction type and grade. See
+Then, in the parent area under Settings, AI connection, choose **OpenAI or
+compatible service** (Direct mode), set the service address to
+`http://localhost:8787/v1`, enter any text as the key and any model name, and
+press **Test connection**. The mock returns valid, varied challenges for every
+interaction type and grade. See
 [docs/AI_PROMPT_MARKERS.md](docs/AI_PROMPT_MARKERS.md).
 
 ## Scripts
@@ -116,7 +125,7 @@ valid, varied challenges for every interaction type and grade. See
 | `npm run typecheck` | TypeScript check only |
 | `npm test` | Unit tests (Vitest), including the proxy and mock AI tests |
 | `npm run test:watch` | Unit tests in watch mode |
-| `npm run e2e` | End-to-end tests (Playwright) |
+| `npm run e2e` | End-to-end tests in Chromium (Playwright). Builds the app first; uses ports 4173 and 8787 |
 | `npm run mock-ai` | OpenAI-compatible mock server on port 8787 |
 | `npm run proxy` | The AI proxy on port 8788, for running it without Docker |
 
@@ -129,11 +138,11 @@ can be tried without Docker: start `npm run mock-ai`, then
 
 A parent chooses the AI mode in the parent area. Nothing is configured at build time.
 
-| Mode | What happens | Key |
-| --- | --- | --- |
-| **Demo** | Built-in challenges only. No network requests | None |
-| **Direct** | The browser calls the AI endpoint | Stored encrypted on the device |
-| **Proxy** | The browser calls `/ai-proxy/v1` on the app's own address; a small server adds the key | On the server only |
+| Mode | Name in the app | What happens | Key |
+| --- | --- | --- | --- |
+| **Demo** | Demo mode | Built-in challenges only. No network requests | None |
+| **Direct** | OpenAI or compatible service | The browser calls the AI endpoint | Stored encrypted on the device |
+| **Proxy** | Proxy on my server | The browser calls `/ai-proxy/v1` on the app's own address; a small server adds the key | On the server only |
 
 - **OpenAI.** Direct mode, base URL `https://api.openai.com/v1`, your API key,
   and a chat model such as `gpt-4o-mini`. Create a separate key for this app and
@@ -183,8 +192,10 @@ src/
   library/       canvas library: keep, rate, reuse, remix
   play/          challenge queue, play screen, help ladder, teach-back
   bot/           the floating helper bot
-  child/         profile picker, adventure map, rewards shelf
-  parent/        setup wizard, settings, profiles, dashboard, history
+  bot/pip/       Pip, the animated mascot
+  child/         profile picker, adventure map, rewards shelf, Imagination Studio, rest screen
+  parent/        setup wizard, password gate, overview, children, history, canvas library, settings
+e2e/             end-to-end tests (Playwright) and their helpers
 server/proxy/    optional AI proxy (plain Node, no dependencies)
 tools/mock-ai/   OpenAI-compatible mock server (plain Node, no dependencies)
 docker/          nginx configuration and Caddyfile
@@ -203,8 +214,39 @@ npm run e2e                   # end-to-end tests
 
 Unit tests sit next to the code they test (`x.test.ts`). The mock AI's output
 is tested against the app's real schemas and content validator, so it cannot
-drift from what the app accepts. CI runs the typecheck, the unit tests and the
-build on every push and pull request, and builds the Docker images.
+drift from what the app accepts.
+
+### End-to-end tests
+
+`npm run e2e` plays through the product in a real browser. It needs Chromium
+once (`npx playwright install chromium`), and ports 4173 and 8787 must be free.
+The command builds the app, serves the build with `vite preview`, starts the
+mock AI and runs every spec in `e2e/` twice: as a phone (390 x 844) and as a
+tablet in landscape (1180 x 820).
+
+```bash
+npm run e2e                               # everything, about 13 minutes
+npm run e2e -- --project=phone            # one screen size
+npm run e2e -- e2e/02-play.spec.ts        # one spec
+```
+
+The specs cover the first-run wizard, the placement game and the play loop with
+all eight ways to answer, the help ladder up to the walkthrough (and that
+nothing on screen is ever called "skip"), concept checks, the parent gate and
+its lockout, history, rating and retiring canvases, switching a subject off, AI
+mode against the mock (including a check that no request holds the child's
+nickname), reuse of canvases for a second child, the daily time limit and
+allowed hours, Robot Coder, Imagination Studio, Story Quest, the rewards shelf,
+and a sweep of every screen for console errors, requests to other origins,
+buttons without a name, sideways scrolling at 360 px and touch targets under
+48 px in the child area.
+
+Each run saves screenshots of every major screen to `e2e/screenshots/phone/`
+and `e2e/screenshots/tablet/` (not committed).
+
+CI runs the typecheck, the unit tests and the build on every push and pull
+request, runs the end-to-end tests (and keeps their screenshots as an
+artifact), and builds the Docker images.
 
 ## Safety and privacy
 

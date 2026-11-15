@@ -39,10 +39,11 @@ Playwright. Import alias: `@/` = `src/`.
 | `src/i18n` | UI strings and `t()`, including the translations of the engine's labels | core |
 | `src/ui` | Shared React components and theme | core, i18n, react-router-dom (`PageShell` back link) |
 | `src/library` | Canvas library: keep, rate, reuse and remix built challenges | core, data |
-| `src/play` | Challenge supply queue, play screen, help ladder, teach-back | everything above, bot |
-| `src/bot` | Floating helper bot | core, ai, voice, ui, play store |
-| `src/child` | Profile picker, adventure map home, mode launcher, rewards shelf | core, data, progression, ui |
-| `src/parent` | Setup wizard, password gate, settings, profiles, dashboard, history | core, data, security, ai, progression, ui |
+| `src/play` | Challenge supply queue (`supply.ts`), play session store, play screen, help ladder, teach-back | core, skills, data, ai, engine, library, offline, progression, voice, i18n, ui, bot (`HelperBot`, `Pip`); `child` only for the badge names, loaded on demand |
+| `src/bot` | Floating helper bot. It only shows and drives the play session store | data (`kv`), play (store), voice, i18n, ui, `./pip` |
+| `src/bot/pip` | Pip, the mascot: one SVG with 20 moods (`Pip`, `usePipMood`) | i18n, ui (`useReducedMotion`) |
+| `src/child` | Profile picker, adventure map home, mode launcher, rewards shelf, Imagination Studio, rest screen | core, data, ai (`localSafetyCheck`), progression, voice, i18n, ui, bot/pip |
+| `src/parent` | Setup wizard, password gate, overview, children, history, canvas library, settings | core, skills, data, security, ai, engine (replay), library, progression, i18n, ui; `play` only for `supplyIdle`, loaded on demand before a reset |
 | `server/proxy` | Optional AI proxy that keeps the API key server-side | none (plain Node) |
 | `tools/mock-ai` | OpenAI-compatible mock server for development and e2e tests | none (plain Node) |
 
@@ -72,13 +73,23 @@ serves in the Docker image.
 | Path | Component | Owner |
 | --- | --- | --- |
 | `/` | redirects to `/setup` until setup is complete, then `/kids` | app |
-| `/setup` | `SetupWizard` | parent |
+| `/setup` | `SetupWizard` (goes to `/parent` once setup is complete) | parent |
 | `/parent/*` | `ParentArea` (shows the password gate itself) | parent |
+| `/parent` | overview | parent |
+| `/parent/children` | the children. Query: `add=1` opens "Add a child" | parent |
+| `/parent/child/:childId` | one child. Query: `tab` = `progress`, `history`, `report`, `profile` or `data` | parent |
+| `/parent/library` | canvas library | parent |
+| `/parent/settings` | settings. Query: `section` = `ai`, `controls`, `language`, `password`, `backup`, `danger` or `about` | parent |
 | `/kids` | profile picker | child (`ChildArea`) |
 | `/kids/:childId` | adventure map home | child |
 | `/kids/:childId/shelf` | rewards shelf and companion | child |
 | `/kids/:childId/studio` | Imagination Studio idea picker | child |
+| `/kids/:childId/rest` | rest screen (play time is used up, or outside the allowed hours) | child |
 | `/kids/:childId/play` | `PlayScreen`. Query: `mode` (a `Mode`), `idea` (studio), `strand` | play |
+
+The parent gate lives in memory only: loading any page, leaving the parent area
+or pressing "Lock" locks it again. Child routes redirect to `/setup` until setup
+is complete; an unknown child id goes back to `/kids`.
 
 ## Core concepts
 
@@ -395,6 +406,8 @@ Rules for users of the engine:
 - While a number challenge is mounted and not disabled, digits typed anywhere
   outside an input fill the answer. Pass `disabled` to `ChallengeStage` whenever
   something is on top of it (helper chat, teach-back, break screen, a modal).
+- From 1024 px in landscape the picture and the answer widget sit side by side,
+  and the picture stays in view (sticky) while a long answer column scrolls.
 - `runRobot().steps[0]` is the start pose. Repeat `times` is clamped to 2..5.
   `checkAnswer` treats identical-looking order items and right-hand match cards
   as interchangeable.
@@ -455,6 +468,8 @@ export function checkChallengeSafety(c: Challenge, strictness: 'strict' | 'stand
 export function getAiStatus(): Promise<{ provider: AiProvider; ready: boolean; reason: string }>;
 export function testConnection(override?: Partial<{ provider: AiProvider; baseUrl: string; apiKey: string; chatModel: string }>): Promise<{ ok: boolean; message: string; latencyMs: number }>;
 export function ageStyleCard(age: AgeGroup): string;
+/** True for an address on this computer or the home network (localhost, 127.x, 10.x, 192.168.x, `*.local`): no API key is needed there. */
+export function isLocalAddress(baseUrl: string): boolean;
 /** Forgets what was learned about the endpoint in this session. Call it after the parent saves changed AI settings. */
 export function resetAiSession(): void;
 export type AiErrorKind = 'no-config' | 'budget' | 'network' | 'auth' | 'rate-limit' | 'bad-response' | 'refused' | 'aborted';
@@ -500,6 +515,8 @@ with `recordUsage` and refused when `checkBudget` says no.
 
 ```ts
 export function effectiveControls(settings: Settings, child: ChildProfile): ParentalControls;
+/** The strands the child may play, in the fixed strand order. The planner and the child's map both use it. */
+export function enabledStrands(controls: Pick<ParentalControls, 'strands'>): Strand[];
 export function planNext(childId: string, count?: number, opts?: { mode?: Mode; strand?: Strand; now?: number }): Promise<ChallengePlan[]>;
 export interface RecordAttemptInput {
   challenge: ChallengeRecord;
@@ -651,39 +668,175 @@ shown, so it looks the same for child and parent), `ToastViewport`, `showToast`,
 
 ```ts
 export function fingerprintOf(content: Challenge): string;
-/** Saves a validated AI-built challenge. Returns the existing item when the fingerprint is already stored. */
-export function saveToLibrary(input: { content: Challenge; plan: ChallengePlan; ageGroup: AgeGroup; locale: Locale; origin: 'ai' | 'remix'; remixOf?: string | null }): Promise<LibraryItem>;
-/** Best unseen, non-retired item for the plan and child, or null. Prefers higher ratings, then fewer uses. */
+export interface SaveToLibraryInput { content: Challenge; plan: ChallengePlan; ageGroup: AgeGroup; locale: Locale; origin: 'ai' | 'remix'; remixOf?: string | null; }
+/** Saves a validated AI-built challenge. Returns the existing item when the fingerprint is already stored. Throws when `content` fails `ChallengeSchema`. */
+export function saveToLibrary(input: SaveToLibraryInput, now?: number): Promise<LibraryItem>;
+/** Best unseen, non-retired item for the plan and child, or null. Order: rating 5, 4, unrated, 3; then fewer uses; then newest. */
 export function findReusable(plan: ChallengePlan, child: { id: string; ageGroup: AgeGroup; interests: string[] }, locale: Locale): Promise<{ item: LibraryItem; themeFits: boolean } | null>;
-export function markServed(libraryId: string, childId: string): Promise<void>;
+export function markServed(libraryId: string, childId: string, now?: number): Promise<void>;   // uses + 1, lastUsedAt, and the child in `seenBy`
+export function markSeen(libraryId: string, childId: string): Promise<void>;                    // `seenBy` only (the child got a remix of the item)
 export function recordLibraryOutcome(libraryId: string, outcome: AttemptOutcome): Promise<void>;
 /** Sets the rating (1-5 or null) and note, retires on 1-2, and mirrors the rating to challenges that point at the item. */
 export function rateLibraryItem(libraryId: string, rating: number | null, note?: string): Promise<LibraryItem>;
 export function setRetired(libraryId: string, retired: boolean): Promise<void>;
-/** Notes from low-rated items for this skill, passed to the AI as things to avoid. */
+/** Notes from low-rated items for this skill, passed to the AI as things to avoid (at most AVOID_NOTES_LIMIT, each cut to AVOID_NOTE_MAX). */
 export function avoidNotesFor(skillId: string): Promise<string[]>;
-export function libraryStats(): Promise<{ total: number; rated: number; retired: number; reusedServes: number }>;
+export interface LibraryStats { total: number; rated: number; retired: number; reusedServes: number; }   // reusedServes: every use of an item after its first
+export function libraryStats(): Promise<LibraryStats>;
+export interface LibraryFilter { strand?: Strand; grade?: Grade; interaction?: InteractionKind; mode?: Mode; rating?: 'unrated' | 'low' | 'high' | number; retired?: boolean; search?: string; }
+export function listLibrary(filter?: LibraryFilter): Promise<LibraryItem[]>;    // the parent area's list, newest first
+export function deleteLibraryItem(id: string): Promise<void>;                   // challenges served from it stay in the history, with `libraryId` cleared
+export const LIBRARY_NOTE_MAX = 500; export const AVOID_NOTES_LIMIT = 5; export const AVOID_NOTE_MAX = 200;
 ```
+
+- A plan in a creative mode only reuses items of that mode. A plain quest reuses
+  any mode except the context-bound ones (`story`, `studio`, `mission`): a story
+  chapter or a studio idea makes no sense out of its context, and a mission must
+  never reach a child whose parent switched missions off.
+- `themeFits` is false when the item's theme is neither the plan's theme nor one
+  of the child's interests; the supply queue then remixes the item when it can.
+- All of these write, except `findReusable`, `avoidNotesFor`, `libraryStats` and
+  `listLibrary`, which are safe inside a live query.
 
 ### `@/play`
 
 ```ts
 // supply.ts: keeps 3-5 validated challenges queued per child
-export function ensureQueue(childId: string, opts?: { min?: number; target?: number }): Promise<void>;   // background safe, deduplicated per child
-export function takeNext(childId: string, opts?: { mode?: Mode; strand?: Strand; idea?: string }): Promise<ChallengeRecord>;  // resumes the active one if any
-export function makeSibling(previous: ChallengeRecord): Promise<ChallengeRecord>;                        // easier sibling after a walkthrough
+export const SUPPLY: { queueMin: 3; queueTarget: 5; queueMax: 10; recentTitles: 15; libraryWindow: 10; libraryShare: 0.5; keepAsIsRating: 4; /* ... see supply.ts */ };
+export function ensureQueue(childId: string, opts?: { min?: number; target?: number }): Promise<void>;   // background safe, deduplicated per child, never rejects
+/** The child's active challenge if there is one that fits the request, else the next queued one (built on the spot when the queue is empty). Marks it `active`. */
+export function takeNext(childId: string, opts?: { mode?: Mode; strand?: Strand; idea?: string }): Promise<ChallengeRecord>;
+/** The easier sibling after a walkthrough, as a `queued` record that `takeNext` serves next. One per challenge: a second call returns the same record. */
+export function makeSibling(previous: ChallengeRecord): Promise<ChallengeRecord>;
+/** Builds the concept check of a skill ahead of time. Does nothing unless the skill has `checkPending` and no check is waiting. Never rejects. */
+export function prepareConceptCheck(childId: string, skillId: string): Promise<void>;
+export function startStory(childId: string, theme?: string): Promise<StoryRecord>;       // 3 chapters for ages 3-8, 4 for older children
+export function advanceStory(storyId: string): Promise<StoryRecord | undefined>;         // brings `currentChapter` and `finished` in step with what was solved
+export function buildContext(child: ChildProfile, settings: Settings): ChildContext;     // what the AI may know about a child: never the nickname, avatar or id
+export function supplyIdle(): Promise<void>;      // resolves when no supply work is running (tests, and before wiping the database)
+export interface SupplyDeps { now: () => number; rng: (() => number) | null; }
+export function setSupplyDeps(next: Partial<SupplyDeps> | null): void;                  // tests
+export function resetSupply(): void;                                                     // tests
 
-// session store read by the bot
-export const usePlaySession: UseBoundStore<StoreApi<PlaySessionState>>;
-export function PlayScreen(): JSX.Element;
+// session.ts: the one store of the play screen, read and driven by the helper bot
+export const usePlaySession: UseBoundStore<StoreApi<PlaySessionState>>;                  // PlaySessionData & PlaySessionActions, see session.ts
+export type { BotMessage, BotOffer, PlayDeps, PlaySessionActions, PlaySessionData, PlaySessionState, StoryView, TeachBackView };
+export function playHomePath(childId: string): string;
+export function recordSettled(): Promise<void>;   // resolves when the attempt of the current challenge is stored
+export function setPlayDeps(next: Partial<PlayDeps> | null): void;                      // tests: clock and randomness
+export function resetPlaySession(): void;                                                // tests
+
+// machine.ts: the pure rules
+export const PLAY: { offerAfterWrongTries: 2; walkthroughAfterWrongTries: 3; idleOfferMs: 45_000; teachBackChance: number; /* ... see machine.ts */ };
+export type PlayPhase = 'idle' | 'loading' | 'story' | 'presenting' | 'answering' | 'solved' | 'teachback' | 'recorded';
+export type HintLevel = 0 | 1 | 2 | 3;
+export type Frame = 'check' | 'placement' | 'story' | 'plain';
+export interface PlayRequest { mode?: Mode; strand?: Strand; idea?: string; }
+export function parseRequest(params: { get(name: string): string | null }): PlayRequest; // unknown values are dropped; `idea` only with mode=studio
+export function frameOf(record: Pick<ChallengeRecord, 'purpose' | 'storyId'>): Frame;
+export function canWalkthrough(run: Pick<Run, 'answers' | 'hintsUsed' | 'walkthroughUsed'>): boolean;   // after the strong hint or three wrong tries
+export type { Run, RewardSummary };
+
+export const PLAY_STRINGS: StringBundle;
+export function PlayScreen(): JSX.Element;        // mounted at /kids/:childId/play; mounts <HelperBot /> itself
 ```
+
+How the play module works, for the modules around it:
+
+- **Request.** `mode=quest` and no `mode` mean the same: the planner chooses.
+  `mode=story` continues the child's unfinished story or starts one;
+  `mode=studio&idea=...` builds one challenge around the idea and then goes on
+  as a plain adventure (the store bumps `urlReset`, the screen drops the query).
+- **Supply order.** For every plan: a fitting library item as it is (`source:
+  'reused'`), or a remix of it when its theme does not fit and the AI is ready
+  (`'remix'`), else `generateChallenge` (`'ai'`, saved to the library), else the
+  offline bank (`'offline'`, not saved). Fewer than half of a child's last ten
+  challenges come from the library. A queued challenge is thrown away when it
+  went stale (the skill moved on, the strand or mode was switched off, the
+  placement ended). Queued challenges are *not* thrown away when the parent
+  connects or disconnects an AI: the next top-up uses the new setting.
+- **Run.** Every submitted answer is an `AnswerEvent`. The run of an unfinished
+  challenge (answers, hints, walkthrough step) is kept in `kv` and restored when
+  the child comes back. `recordAttempt` is called exactly once, after the
+  teach-back when there is one; `recordLibraryOutcome` follows for library items.
+- **Help ladder.** Hint 1, hint 2, then the walkthrough (`canWalkthrough`). Help
+  is offered, never forced, after two wrong tries or 45 s without interaction.
+  After a walkthrough the next challenge is the sibling from `makeSibling`
+  (not during placement). There is no skip action in the store at all.
+- **Concept check.** When `AttemptResult` reports `checkPending` for the skill,
+  the store calls `prepareConceptCheck`, and `takeNext` serves the check next.
+- **Limits.** The store wraps play in `startSession` / `tickSession` /
+  `endSession`, counts only active time, and reads `getPlayAllowance` after
+  every recorded challenge: when play time is used up, "Next adventure" becomes
+  "Time for a rest" and leads to `/kids/:childId/rest`. A challenge in progress
+  is never interrupted. Four wrong answers within 15 seconds open a breathing
+  break (`detectFrustration`).
+- **`kv` keys:** `play:run:${challengeId}:${childId}` (the run in progress),
+  `play:story:${storyId}:${childId}` (the picture of a story chapter),
+  `bot-muted:${childId}`.
+- **DOM hooks:** `[data-bot-dock]` (the column of the question card: Pip's home
+  spot is its top right corner), `[data-bot-keepout]` (the top bar: Pip cannot
+  be dragged over it), `[data-star-source]` / `[data-star-target]` (where reward
+  stars fly from and to).
+- **Test hooks:** `data-testid="play-screen"` carries `data-phase`; also
+  `prompt-card` (`data-frame`), `question`, `check-button`, `star-counter`,
+  `placement-dots`, `solved-sheet`, `teachback`, `rewards`, `next-button`,
+  `walkthrough-sheet`, `break-sheet`, `story-card`, `bot-bubble`, `bot-panel`,
+  `helper-bot`. The engine marks the stage with `data-interaction="<kind>"`.
 
 ### `@/bot`
 
 ```tsx
-/** Floating, draggable helper. Reads the current challenge from `usePlaySession`. */
-export function HelperBot(props: { childId: string }): JSX.Element;
+/** Floating, draggable helper. Reads the current challenge from `usePlaySession` and calls its actions. Renders nothing while no challenge is on screen. */
+export function HelperBot(props: { childId: string }): JSX.Element | null;
+
+// The mascot (src/bot/pip), usable on any screen
+export const PIP_STATES: readonly ['idle', 'listening', 'thinking', 'talking', 'singing', 'happy', 'giggle', 'sad', 'angry', 'tired', 'sleeping', 'waiting', 'jump_scared', 'curious', 'proud', 'shy', 'teaching', 'reading', 'storytelling', 'celebrating'];
+export type PipState = (typeof PIP_STATES)[number];
+export function isPipState(value: unknown): value is PipState;
+export type PipLookAt = { x: number; y: number } | 'pointer' | null;
+export interface PipProps { state?: PipState; size?: number | string; talking?: boolean; mouthLevel?: number; lookAt?: PipLookAt; reducedMotion?: boolean; onTap?: () => void; className?: string; ariaLabel?: string; }
+export function Pip(props: PipProps): JSX.Element;
+/** A base mood plus short reactions on top: `[state, react, calm]`. */
+export function usePipMood(base: PipState, opts?: PipMoodOptions): [PipState, PipReact, () => void];
+export type PipReact = (state: PipState, ms?: number) => void;
+export function PipGallery(): JSX.Element;        // development only; not routed
+
+export const BOT: { sizeSmall: 72; sizeLarge: 92; bubbleWidth: 304; panelWidth: 400; sheetBelow: 640; /* ... see geometry.ts */ };
+export function botSize(viewport: { width: number; height: number }): number;
+export function pipStateFor(input: { /* the session's flags */ }): PipState;
+export function positionKey(childId: string): string;      // `bot-position:${childId}` in kv
+export const BOT_STRINGS: StringBundle;
 ```
+
+- `Pip` draws one `<svg class="pip-bot" data-state="...">`. `pip.css` selects
+  eyes, mouth, props and motion by `data-state`; its size defaults sit in
+  `@layer base`, so a Tailwind size utility in `className` wins over them.
+  Without `size` or a size class Pip is 10rem wide.
+- With `reducedMotion` (default: `useReducedMotion()`) every mood is a still picture.
+- The helper is a view of the session store: hints, the walkthrough, open chat,
+  reading aloud and muting all go through `usePlaySession` actions. The bot
+  itself stores only where it was dragged to (`positionKey`).
+- Below 640 px the help panel is a sheet at the bottom. Pip stays below the
+  `[data-bot-keepout]` element (the play screen's top bar).
+- The speech bubble lies over the page. A press anywhere else puts a plain line
+  away, on every screen size; a line that offers help stays until it is answered
+  or closed. Every line is kept in the panel's conversation.
+
+### `@/child` and `@/parent`
+
+```tsx
+export function ChildArea(): JSX.Element;      // @/child, mounted at /kids/*
+export function ParentArea(): JSX.Element;     // @/parent, mounted at /parent/*
+export function SetupWizard(): JSX.Element;    // @/parent, mounted at /setup
+```
+
+- The child area never shows a link out of the app and never a parent control;
+  the "Grown-ups" lock on the profile picker leads to the password gate.
+- Resetting the device (`src/parent/reset.ts`, used by the gate's "forgot the
+  password" path and by Settings) first waits for `supplyIdle()` (at most five
+  seconds), so a challenge that is still being built cannot write into the
+  emptied database, then calls `wipeEverything()`.
 
 ## Child safety rules that code must uphold
 
@@ -755,7 +908,9 @@ contract for `library`, `play`, `bot`, `child` and `parent`.
   `changeAdminPassword` means a wrong current password or a lock; show the
   countdown from `getLockoutState()`.
 - Call `useParentGate.getState().touch()` on pointer and key activity.
-- After `wipeEverything()`: `useParentGate.getState().lock()`, then go to `/setup`.
+- Reset with `resetDevice()` from `src/parent/reset.ts` (it waits for the supply
+  queue, then calls `wipeEverything()`), then `useParentGate.getState().lock()`
+  and go to `/setup`.
 - Restore: `importBackup(await readBackupFile(file), mode)` and show the thrown
   message. Warn before `replace`: it removes every child on the device, also
   when the file holds one child.
@@ -768,6 +923,30 @@ contract for `library`, `play`, `bot`, `child` and `parent`.
   send audio to the browser maker.
 - Dashboard: `getStrandStages` is the current level; strand history rows can
   lag it by one step.
+
+## End-to-end tests (`e2e/`)
+
+`npm run e2e` builds the app, serves it with `vite preview` on port 4173, starts
+the mock AI (`tools/mock-ai/server.mjs`) on port 8787 and runs the Playwright
+specs in Chromium twice: as a phone (390 x 844) and as a tablet in landscape
+(1180 x 820), both at device scale factor 2. One worker, no retries, tracing off.
+
+- `e2e/helpers/db.ts` reads and seeds the app's IndexedDB directly. The app only
+  notices such a write after a reload (Dexie live queries do not see it).
+- `e2e/helpers/solver.ts` reads the active `ChallengeRecord`, works out a right
+  (or wrong) answer with the engine's own `checkAnswer`, and enters it through
+  the real controls of all eight interaction kinds.
+- `e2e/helpers/app.ts` holds the steps of a parent and a child (setup wizard,
+  unlocking the parent area, connecting the mock AI) and `expectNoSkip`.
+- `e2e/helpers/audit.ts` checks a screen for buttons without an accessible name,
+  horizontal overflow, raw translation keys and touch targets under 48 px.
+- Every spec saves screenshots to `e2e/screenshots/<project>/` (not committed;
+  CI uploads them as an artifact).
+- The parent gate is in memory, so a spec moves through the parent area by its
+  navigation, never by `page.goto`.
+- The mock AI remembers its latest requests (`GET /__mock/log`, size set with
+  `MOCK_LOG_LIMIT`); the privacy spec reads them to prove that no request holds
+  the child's nickname or id.
 
 ## Conventions
 

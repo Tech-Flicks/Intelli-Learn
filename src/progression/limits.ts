@@ -29,7 +29,7 @@ export function effectiveControls(settings: Settings, child: ChildProfile): Pare
 }
 
 /** The strands the child may play, in the fixed strand order. All of them when a parent disabled every one. */
-export function enabledStrands(controls: ParentalControls): Strand[] {
+export function enabledStrands(controls: Pick<ParentalControls, 'strands'>): Strand[] {
   const enabled = STRANDS.filter((strand) => controls.strands[strand] !== false);
   return enabled.length > 0 ? enabled : [...STRANDS];
 }

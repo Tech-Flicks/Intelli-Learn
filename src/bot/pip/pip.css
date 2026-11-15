@@ -1,0 +1,392 @@
+/*
+ * Pip, the helper robot: styles and the choreography of the 20 states.
+ *
+ * Ported from design/pip-mascot-sandbox.html. Every rule lives under the root class
+ * `.pip-bot` and the design's ids became `.pip-*` classes, so any number of mascots can be
+ * on one page. Three things are driven from JavaScript (engine.ts) and only read here:
+ * the custom properties --mouth-open, --gaze-x and --gaze-y, and the presence attributes
+ * data-blink, data-pop and data-speaking on the root. Nothing is loaded from the network.
+ */
+
+/*
+ * Defaults a utility class or the `size` prop can replace. They sit in the `base` cascade
+ * layer, below Tailwind's utilities: outside a layer they would beat every utility class
+ * (`hidden`, `w-16`, `sm:block` ...) whatever their specificity.
+ */
+@layer base {
+  :where(.pip-bot) {
+    display: block;
+    flex: none;
+    width: 10rem;
+    height: 10rem;
+  }
+}
+
+.pip-bot {
+  --mouth-open: 0;
+  --gaze-x: 0px;
+  --gaze-y: 0px;
+  /* Raised arms, the star and floating props may reach past the box. */
+  overflow: visible !important;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.07)) drop-shadow(0 2px 2px rgb(0 0 0 / 0.06));
+}
+
+/* The letters on the props use the app's display font (bundled with the app). */
+.pip-bot .pip-text {
+  font-family: var(--font-display, 'Baloo 2', ui-rounded, system-ui, sans-serif);
+}
+
+/* With `onTap` the whole mascot is one button. */
+.pip-bot.pip-tappable {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+/* Browsers draw their own ring around a focused SVG after a mouse click or a tap too: keep the ring for the keyboard. */
+.pip-bot.pip-tappable:focus:not(:focus-visible) {
+  outline: none;
+}
+.pip-bot.pip-tappable:focus-visible {
+  outline: var(--focus-ring-width, 3px) solid var(--focus-ring, #4a3bc4);
+  outline-offset: 4px;
+  border-radius: 22%;
+}
+
+/* The articulated groups turn around fixed points of the 380 x 380 view box. */
+.pip-bot .pip-bot-whole {
+  transform-box: view-box;
+  transform-origin: 190px 230px;
+  transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pip-bot .pip-body-group {
+  transform-box: view-box;
+  transform-origin: 190px 264px;
+  transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pip-bot .pip-head-group {
+  transform-box: view-box;
+  transform-origin: 190px 206px;
+  transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pip-bot .pip-antenna-group {
+  transform-box: view-box;
+  transform-origin: 190px 72px;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+}
+
+.pip-bot .pip-bot-shadow {
+  transform-box: view-box;
+  transform-origin: 190px 346px;
+  transition: transform 0.38s ease, opacity 0.38s ease;
+}
+
+/* The arms and hands are the top layer and are never hidden by a state. */
+.pip-bot .pip-arms-kinematic-layer {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Chest Golden Heart-Gear Continuous Rotation */
+.pip-bot .pip-chest-gear {
+  transform-box: view-box;
+  transform-origin: 190px 257px;
+  animation: pipGearSpin 9s linear infinite;
+}
+.pip-bot[data-state="thinking"] .pip-chest-gear,
+.pip-bot[data-state="talking"] .pip-chest-gear,
+.pip-bot[data-state="celebrating"] .pip-chest-gear,
+.pip-bot[data-state="proud"] .pip-chest-gear {
+  animation-duration: 2s;
+}
+.pip-bot[data-state="sleeping"] .pip-chest-gear,
+.pip-bot[data-state="tired"] .pip-chest-gear {
+  animation-duration: 22s;
+}
+
+/* The pupils follow --gaze-x / --gaze-y, which PipEngine writes. */
+.pip-bot .pip-pupil-left,
+.pip-bot .pip-pupil-right {
+  transform: translate(var(--gaze-x), var(--gaze-y));
+  transition: transform 0.14s ease-out;
+}
+
+.pip-bot .pip-eye-open-scale {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.12s ease;
+}
+
+/* Blinking: PipEngine sets data-blink for a moment. */
+.pip-bot[data-blink] .pip-eye-open-scale {
+  transform: scaleY(0.08);
+}
+
+/* Angry Visor Red-Coral Tint */
+.pip-bot .pip-angry-screen-tint {
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+.pip-bot[data-state="angry"] .pip-angry-screen-tint {
+  opacity: 1;
+}
+
+/* Eye Expression Layers */
+.pip-bot .pip-eye-layer {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pip-bot[data-state="idle"] .pip-eye-open,
+.pip-bot[data-state="listening"] .pip-eye-open,
+.pip-bot[data-state="thinking"] .pip-eye-open,
+.pip-bot[data-state="talking"] .pip-eye-open,
+.pip-bot[data-state="happy"] .pip-eye-open,
+.pip-bot[data-state="teaching"] .pip-eye-open,
+.pip-bot[data-state="reading"] .pip-eye-open,
+.pip-bot[data-state="storytelling"] .pip-eye-open,
+.pip-bot[data-state="curious"] .pip-eye-open,
+.pip-bot[data-state="shy"] .pip-eye-open {
+  opacity: 1;
+}
+
+.pip-bot[data-state="giggle"] .pip-eye-happy-arcs,
+.pip-bot[data-state="singing"] .pip-eye-happy-arcs,
+.pip-bot[data-state="celebrating"] .pip-eye-happy-arcs,
+.pip-bot[data-state="proud"] .pip-eye-happy-arcs {
+  opacity: 1;
+}
+
+.pip-bot[data-state="sad"] .pip-eye-sad { opacity: 1; }
+.pip-bot[data-state="angry"] .pip-eye-angry { opacity: 1; }
+.pip-bot[data-state="tired"] .pip-eye-tired { opacity: 1; }
+.pip-bot[data-state="sleeping"] .pip-eye-sleep,
+.pip-bot[data-state="waiting"] .pip-eye-sleep { opacity: 1; }
+.pip-bot[data-state="jump_scared"] .pip-eye-scared { opacity: 1; }
+
+/* Curious Asymmetric Eye Scale */
+.pip-bot[data-state="curious"] .pip-eye-left-wrap { transform: scale(1.18); }
+.pip-bot[data-state="curious"] .pip-eye-right-wrap { transform: scale(0.9); }
+
+/* Eyebrows */
+.pip-bot .pip-brow-left,
+.pip-bot .pip-brow-right {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+}
+.pip-bot[data-state="sad"] .pip-brow-left,
+.pip-bot[data-state="shy"] .pip-brow-left { transform: translateY(3px) rotate(-16deg); }
+.pip-bot[data-state="sad"] .pip-brow-right,
+.pip-bot[data-state="shy"] .pip-brow-right { transform: translateY(3px) rotate(16deg); }
+.pip-bot[data-state="angry"] .pip-brow-left,
+.pip-bot[data-state="angry"] .pip-brow-right { opacity: 0; }
+.pip-bot[data-state="curious"] .pip-brow-left { transform: translateY(-5px) rotate(-10deg); }
+.pip-bot[data-state="curious"] .pip-brow-right { transform: translateY(2px) rotate(8deg); }
+.pip-bot[data-state="thinking"] .pip-brow-left { transform: translateY(-4px) rotate(-8deg); }
+.pip-bot[data-state="thinking"] .pip-brow-right { transform: translateY(-5px) rotate(10deg); }
+.pip-bot[data-state="jump_scared"] .pip-brow-left { transform: translateY(-6px) rotate(-14deg); }
+.pip-bot[data-state="jump_scared"] .pip-brow-right { transform: translateY(-6px) rotate(14deg); }
+.pip-bot[data-state="listening"] .pip-brow-left,
+.pip-bot[data-state="listening"] .pip-brow-right { transform: translateY(-3px); }
+
+/* Cheeks */
+.pip-bot .pip-cheeks-group {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+.pip-bot[data-state="angry"] .pip-cheeks-group,
+.pip-bot[data-state="jump_scared"] .pip-cheeks-group { opacity: 0.25; }
+.pip-bot[data-state="shy"] .pip-cheeks-group { opacity: 1; transform: scale(1.22); }
+
+/* Mouth Layers */
+.pip-bot .pip-mouth-layer {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.pip-bot[data-state="idle"] .pip-mouth-smile,
+.pip-bot[data-state="listening"] .pip-mouth-smile,
+.pip-bot[data-state="happy"] .pip-mouth-smile,
+.pip-bot[data-state="teaching"] .pip-mouth-smile,
+.pip-bot[data-state="reading"] .pip-mouth-smile,
+.pip-bot[data-state="storytelling"] .pip-mouth-smile,
+.pip-bot[data-state="sleeping"] .pip-mouth-smile,
+.pip-bot[data-state="shy"] .pip-mouth-smile {
+  opacity: 1;
+}
+
+.pip-bot[data-state="proud"] .pip-mouth-proud { opacity: 1; }
+.pip-bot[data-state="giggle"] .pip-mouth-giggle,
+.pip-bot[data-state="celebrating"] .pip-mouth-giggle { opacity: 1; }
+.pip-bot[data-state="sad"] .pip-mouth-sad,
+.pip-bot[data-state="angry"] .pip-mouth-sad { opacity: 1; }
+.pip-bot[data-state="waiting"] .pip-mouth-flat { opacity: 1; }
+.pip-bot[data-state="curious"] .pip-mouth-curious,
+.pip-bot[data-state="thinking"] .pip-mouth-curious { opacity: 1; }
+.pip-bot[data-state="tired"] .pip-mouth-yawn { opacity: 1; }
+.pip-bot[data-state="jump_scared"] .pip-mouth-scared { opacity: 1; }
+
+/* The talking mouth opens with --mouth-open (0..1), which PipEngine writes. */
+.pip-bot[data-state="talking"] .pip-mouth-dynamic,
+.pip-bot[data-state="singing"] .pip-mouth-dynamic {
+  opacity: 1;
+}
+
+.pip-bot .pip-dynamic-mouth-shape {
+  transform-box: view-box;
+  transform-origin: 190px 164px;
+  transform: scaleY(calc(0.24 + var(--mouth-open) * 1.15)) scaleX(calc(0.86 + var(--mouth-open) * 0.24));
+  transition: transform 0.045s linear;
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. CONTEXTUAL PROPS & PARTICLE OVERLAYS
+ * ------------------------------------------------------------------------- */
+.pip-bot .pip-bot-prop {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pip-bot[data-state="teaching"] .pip-prop-chalkboard,
+.pip-bot[data-state="teaching"] .pip-prop-glasses,
+.pip-bot[data-state="teaching"] .pip-prop-pointer { opacity: 1; }
+.pip-bot[data-state="reading"] .pip-prop-book { opacity: 1; }
+.pip-bot[data-state="storytelling"] .pip-prop-wizard-hat,
+.pip-bot[data-state="storytelling"] .pip-prop-magic-aura { opacity: 1; }
+.pip-bot[data-state="storytelling"] .pip-antenna-group { opacity: 0; }
+.pip-bot[data-state="sleeping"] .pip-prop-pillow { opacity: 1; }
+.pip-bot[data-state="tired"] .pip-prop-tired-fx { opacity: 1; }
+.pip-bot[data-state="waiting"] .pip-prop-waiting-fx,
+.pip-bot[data-state="waiting"] .pip-prop-waiting-desk { opacity: 1; }
+.pip-bot[data-state="sad"] .pip-prop-raincloud { opacity: 1; }
+.pip-bot[data-state="angry"] .pip-prop-steam { opacity: 1; }
+.pip-bot[data-state="jump_scared"] .pip-prop-scared-fx { opacity: 1; }
+.pip-bot[data-state="singing"] .pip-prop-music-notes,
+.pip-bot[data-state="singing"] .pip-prop-microphone { opacity: 1; }
+.pip-bot[data-state="giggle"] .pip-prop-giggle-fx { opacity: 1; }
+.pip-bot[data-state="listening"] .pip-prop-listen-waves { opacity: 1; }
+.pip-bot[data-state="talking"] .pip-prop-talk-waves { opacity: 1; }
+.pip-bot[data-state="celebrating"] .pip-prop-celebrate-fx { opacity: 1; }
+.pip-bot[data-state="happy"] .pip-prop-hearts-stars,
+.pip-bot[data-state="proud"] .pip-prop-hearts-stars,
+.pip-bot[data-state="shy"] .pip-prop-hearts-stars { opacity: 1; }
+.pip-bot[data-state="thinking"] .pip-prop-think-bubbles { opacity: 1; }
+.pip-bot[data-state="curious"] .pip-prop-curious-q,
+.pip-bot[data-state="curious"] .pip-prop-magnifying-glass { opacity: 1; }
+
+/* ---------------------------------------------------------------------------
+ * 3. HEAD & BODY CHOREOGRAPHY ACROSS ALL 20 STATES
+ * (the arms and hands are moved by PipEngine, not by CSS)
+ * ------------------------------------------------------------------------- */
+.pip-bot[data-state="idle"] .pip-bot-whole { animation: pipIdleFloat 3.4s ease-in-out infinite; }
+.pip-bot[data-state="idle"] .pip-bot-shadow { animation: pipShadowPulse 3.4s ease-in-out infinite; }
+
+.pip-bot[data-state="listening"] .pip-head-group { transform: rotate(-4deg) translateY(2px); animation: pipListenNod 2s ease-in-out infinite; }
+.pip-bot[data-state="thinking"] .pip-head-group { transform: rotate(6deg) translateY(-2px); animation: pipThinkTilt 2.8s ease-in-out infinite; }
+.pip-bot[data-state="talking"] .pip-head-group { animation: pipTalkBob 0.55s ease-in-out infinite; }
+.pip-bot[data-state="singing"] .pip-bot-whole { animation: pipSingSway 1.2s ease-in-out infinite; }
+.pip-bot[data-state="happy"] .pip-bot-whole { animation: pipHappyBounce 1.35s ease-in-out infinite; }
+.pip-bot[data-state="giggle"] .pip-head-group { animation: pipGiggleHead 0.28s ease-in-out infinite; }
+.pip-bot[data-state="sad"] .pip-head-group { transform: translateY(7px) rotate(-3deg); animation: pipSadSigh 3.2s ease-in-out infinite; }
+.pip-bot[data-state="angry"] .pip-bot-whole { animation: pipAngryShake 0.16s linear infinite; }
+.pip-bot[data-state="tired"] .pip-head-group { transform: translateY(6px) rotate(4deg); animation: pipTiredSway 3.4s ease-in-out infinite; }
+.pip-bot[data-state="sleeping"] .pip-head-group { transform: translate(-8px, 9px) rotate(-10deg); animation: pipSleepHead 3.6s ease-in-out infinite; }
+.pip-bot[data-state="sleeping"] .pip-body-group { animation: pipSleepBody 3.6s ease-in-out infinite; }
+.pip-bot[data-state="waiting"] .pip-head-group { transform: translate(-5px, 6px) rotate(-7deg); }
+.pip-bot[data-state="jump_scared"] .pip-bot-whole { animation: pipJumpScare 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards, pipScareTremble 0.13s linear 0.42s infinite; }
+.pip-bot[data-state="jump_scared"] .pip-bot-shadow { transform: scale(0.75); opacity: 0.45; }
+.pip-bot[data-state="curious"] .pip-head-group { transform: rotate(9deg) translateY(-2px); }
+.pip-bot[data-state="proud"] .pip-body-group { transform: scale(1.03) translateY(-2px); }
+.pip-bot[data-state="proud"] .pip-head-group { transform: translateY(-4px) rotate(-2deg); }
+.pip-bot[data-state="shy"] .pip-head-group { transform: translateY(5px) rotate(-5deg); animation: pipShySway 2.4s ease-in-out infinite; }
+.pip-bot[data-state="teaching"] .pip-bot-whole { transform: translateX(-28px); }
+.pip-bot[data-state="reading"] .pip-head-group { transform: translateY(5px); animation: pipReadScan 2.8s ease-in-out infinite; }
+.pip-bot[data-state="storytelling"] .pip-bot-whole { animation: pipIdleFloat 2.6s ease-in-out infinite; }
+.pip-bot[data-state="celebrating"] .pip-bot-whole { animation: pipCelebrateJump 0.72s ease-in-out infinite; }
+.pip-bot[data-state="celebrating"] .pip-bot-shadow { animation: pipCelebrateShadow 0.72s ease-in-out infinite; }
+
+/* Squash and stretch on a tap: PipEngine sets data-pop for the length of the bounce. */
+.pip-bot[data-pop] .pip-bot-whole {
+  animation: pipSquashPop 0.46s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+
+/* Ambient Prop Motion Helpers */
+.pip-bot .pip-anim-float-slow { animation: pipPropFloat 2.6s ease-in-out infinite; }
+.pip-bot .pip-anim-float-fast { animation: pipPropFloat 1.5s ease-in-out infinite; }
+.pip-bot .pip-anim-pulse-wave { animation: pipWavePulse 1.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.pip-bot .pip-anim-zzz-1 { animation: pipZzzRise 2.7s ease-in-out infinite; }
+.pip-bot .pip-anim-zzz-2 { animation: pipZzzRise 2.7s ease-in-out 0.9s infinite; }
+.pip-bot .pip-anim-zzz-3 { animation: pipZzzRise 2.7s ease-in-out 1.8s infinite; }
+.pip-bot .pip-anim-tear { animation: pipTearDrop 1.7s ease-in infinite; }
+.pip-bot .pip-anim-steam-l { animation: pipSteamL 1.1s ease-out infinite; }
+.pip-bot .pip-anim-steam-r { animation: pipSteamR 1.1s ease-out 0.3s infinite; }
+.pip-bot .pip-anim-confetti { animation: pipConfettiPop 1.25s ease-out infinite; }
+
+@keyframes pipGearSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes pipIdleFloat { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-6px); } }
+@keyframes pipShadowPulse { 0%, 100% { transform: scaleX(1); opacity: 0.16; } 50% { transform: scaleX(0.9); opacity: 0.11; } }
+@keyframes pipListenNod { 0%, 100% { transform: rotate(-4deg) translateY(2px); } 50% { transform: rotate(-6deg) translateY(5px); } }
+@keyframes pipThinkTilt { 0%, 100% { transform: rotate(6deg) translateY(-2px); } 50% { transform: rotate(9deg) translateY(-4px); } }
+@keyframes pipTalkBob { 0%, 100% { transform: translateY(0px) rotate(0deg); } 35% { transform: translateY(-3px) rotate(-2deg); } 70% { transform: translateY(1px) rotate(2deg); } }
+@keyframes pipSingSway { 0%, 100% { transform: rotate(-4deg) translateY(0px); } 50% { transform: rotate(4deg) translateY(-5px); } }
+@keyframes pipHappyBounce { 0%, 100% { transform: translateY(0px); } 45% { transform: translateY(-8px); } }
+@keyframes pipGiggleHead { 0%, 100% { transform: translateY(0px) rotate(-2deg); } 50% { transform: translateY(-3px) rotate(2deg); } }
+@keyframes pipSadSigh { 0%, 100% { transform: translateY(7px) rotate(-3deg); } 50% { transform: translateY(11px) rotate(-4deg); } }
+@keyframes pipAngryShake { 0% { transform: translate(-2px, 0); } 25% { transform: translate(2px, -1px); } 50% { transform: translate(-2px, 1px); } 75% { transform: translate(2px, 0); } 100% { transform: translate(-2px, 0); } }
+@keyframes pipTiredSway { 0%, 100% { transform: translateY(6px) rotate(3deg); } 50% { transform: translateY(10px) rotate(6deg); } }
+@keyframes pipSleepHead { 0%, 100% { transform: translate(-8px, 9px) rotate(-10deg); } 50% { transform: translate(-8px, 6px) rotate(-8deg); } }
+@keyframes pipSleepBody { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.03); } }
+@keyframes pipJumpScare { 0% { transform: translateY(0) scale(0.92, 1.08); } 45% { transform: translateY(-20px) scale(1.04, 0.96); } 100% { transform: translateY(-8px) scale(1, 1); } }
+@keyframes pipScareTremble { 0%, 100% { transform: translate(-1.5px, -8px); } 50% { transform: translate(1.5px, -8px); } }
+@keyframes pipShySway { 0%, 100% { transform: translateY(5px) rotate(-5deg); } 50% { transform: translateY(6px) rotate(-2deg); } }
+@keyframes pipReadScan { 0%, 100% { transform: translateY(5px) rotate(-2deg); } 50% { transform: translateY(5px) rotate(2deg); } }
+@keyframes pipCelebrateJump { 0%, 100% { transform: translateY(0px) scale(1.03, 0.96); } 45% { transform: translateY(-16px) scale(0.97, 1.04); } }
+@keyframes pipCelebrateShadow { 0%, 100% { transform: scaleX(1.05); opacity: 0.18; } 45% { transform: scaleX(0.68); opacity: 0.08; } }
+@keyframes pipSquashPop { 0% { transform: scale(1, 1); } 30% { transform: scale(1.14, 0.86) translateY(8px); } 65% { transform: scale(0.93, 1.08) translateY(-10px); } 100% { transform: scale(1, 1) translateY(0px); } }
+@keyframes pipPropFloat { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-6px); } }
+@keyframes pipWavePulse { 0% { transform: scale(0.85); opacity: 0.9; } 100% { transform: scale(1.42); opacity: 0; } }
+@keyframes pipZzzRise { 0% { transform: translate(0, 8px) scale(0.7); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(11px, -20px) scale(1.15); opacity: 0; } }
+@keyframes pipTearDrop { 0% { transform: translateY(0px) scale(0.8); opacity: 0.95; } 80% { transform: translateY(20px) scale(1); opacity: 0.9; } 100% { transform: translateY(26px) scale(0.6); opacity: 0; } }
+@keyframes pipSteamL { 0% { transform: translate(0, 0) scale(0.7); opacity: 0.95; } 100% { transform: translate(-16px, -14px) scale(1.25); opacity: 0; } }
+@keyframes pipSteamR { 0% { transform: translate(0, 0) scale(0.7); opacity: 0.95; } 100% { transform: translate(16px, -14px) scale(1.25); opacity: 0; } }
+@keyframes pipConfettiPop { 0% { transform: translateY(5px) scale(0.75); opacity: 0.25; } 50% { transform: translateY(-9px) scale(1.06); opacity: 1; } 100% { transform: translateY(3px) scale(0.9); opacity: 0.45; } }
+
+/* ---------------------------------------------------------------------------
+ * Talking in any state
+ * While Pip speaks (data-speaking), the talking mouth replaces the mouth of the state.
+ * These rules come after the state rules on purpose: same weight, later wins.
+ * ------------------------------------------------------------------------- */
+.pip-bot[data-speaking] .pip-mouth-layer { opacity: 0; }
+.pip-bot[data-speaking] .pip-mouth-dynamic { opacity: 1; }
+
+/* ---------------------------------------------------------------------------
+ * Reduced motion (.pip-still)
+ * No animation and no transition. Each state is one friendly picture; the states whose
+ * character came only from an animation get a resting pose of their own.
+ * ------------------------------------------------------------------------- */
+.pip-bot.pip-still,
+.pip-bot.pip-still * {
+  animation: none !important;
+  transition: none !important;
+}
+.pip-bot.pip-still[data-state="talking"] .pip-head-group { transform: rotate(-2deg); }
+.pip-bot.pip-still[data-state="singing"] .pip-bot-whole { transform: rotate(-3deg); }
+.pip-bot.pip-still[data-state="happy"] .pip-bot-whole { transform: translateY(-4px); }
+.pip-bot.pip-still[data-state="giggle"] .pip-head-group { transform: translateY(-2px) rotate(-2deg); }
+.pip-bot.pip-still[data-state="jump_scared"] .pip-bot-whole { transform: translateY(-8px); }
+.pip-bot.pip-still[data-state="celebrating"] .pip-bot-whole { transform: translateY(-10px); }
+.pip-bot.pip-still[data-state="celebrating"] .pip-bot-shadow { transform: scaleX(0.8); opacity: 0.11; }
+
+/* High contrast: no soft glow behind the mascot. */
+html.a11y-contrast .pip-bot .pip-ambient {
+  display: none;
+}

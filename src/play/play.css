@@ -1,0 +1,67 @@
+/*
+ * Small pieces of motion for the play screen. Calm mode and the system's
+ * reduced-motion setting stop all of them through the global rule in src/index.css.
+ */
+
+/* Loading: a soft light that moves across the place where the canvas will be. */
+.play-shimmer {
+  background: linear-gradient(100deg, var(--color-brand-100) 30%, #ffffff 50%, var(--color-brand-100) 70%);
+  background-size: 220% 100%;
+  animation: play-shimmer 1.5s linear infinite;
+}
+@keyframes play-shimmer {
+  from {
+    background-position: 220% 0;
+  }
+  to {
+    background-position: -220% 0;
+  }
+}
+
+/* The loading view only shows up when loading takes a moment: no flash for a challenge that was ready. */
+.play-late {
+  animation: play-fade 0.25s ease-out 0.18s both;
+}
+@keyframes play-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The slow breath of the break moment: four seconds in, four seconds out. */
+.play-breathe {
+  animation: play-breathe 8s ease-in-out infinite;
+}
+@keyframes play-breathe {
+  0%,
+  100% {
+    transform: scale(0.7);
+  }
+  45%,
+  55% {
+    transform: scale(1.06);
+  }
+}
+
+/* Reward stars pop in one after the other. */
+.play-star {
+  animation: play-star 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+@keyframes play-star {
+  from {
+    opacity: 0;
+    transform: scale(0.2) rotate(-40deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+html.a11y-contrast .play-shimmer {
+  background: #ffffff;
+  outline: 2px solid var(--color-ink-900);
+}

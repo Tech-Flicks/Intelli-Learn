@@ -1,0 +1,49 @@
+/*
+ * Print stylesheet of the parent area. Only the weekly report prints: everything else on
+ * the page is hidden, and the report is laid out as one clean sheet.
+ */
+@media print {
+  @page {
+    margin: 16mm;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    background: #ffffff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .parent-print-area,
+  .parent-print-area * {
+    visibility: visible !important;
+  }
+
+  .parent-print-area {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    color: #000000;
+  }
+
+  .parent-print-area section {
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  .parent-print-area li,
+  .parent-print-area h3 {
+    break-inside: avoid;
+  }
+
+  /* Toasts and dialogs never belong on paper. */
+  [data-toast-viewport],
+  [data-modal-backdrop] {
+    display: none !important;
+  }
+}

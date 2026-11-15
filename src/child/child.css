@@ -1,0 +1,137 @@
+/*
+ * Styles of the child area that Tailwind utilities cannot express: the world backdrops
+ * of the adventure map and a few keyframes. Colours come from the theme tokens in
+ * `src/index.css`. Calm mode and the OS reduced-motion setting switch every animation
+ * here off through the global rules in that file.
+ */
+
+/* --- adventure map worlds --------------------------------------------------- */
+
+.child-world {
+  background: var(--color-brand-50);
+}
+.child-world-math {
+  background: linear-gradient(180deg, var(--color-sky-100) 0%, var(--color-brand-100) 100%);
+}
+.child-world-science {
+  background: linear-gradient(180deg, var(--color-sun-100) 0%, var(--color-leaf-100) 70%);
+}
+.child-world-technology {
+  background: linear-gradient(180deg, var(--color-brand-50) 0%, var(--color-sky-100) 100%);
+}
+.child-world-engineering {
+  background: linear-gradient(180deg, var(--color-sun-100) 0%, var(--color-coral-100) 100%);
+}
+.child-world-logic {
+  background: linear-gradient(160deg, #1f1a3d 0%, #2c2279 60%, #3b2ea0 100%);
+}
+
+/* High contrast: flat backdrops, a clear edge, no scenery (`.decor` is hidden globally). */
+html.a11y-contrast .child-world {
+  background: #ffffff;
+  box-shadow: 0 0 0 3px #1f1a3d;
+}
+html.a11y-contrast .child-world-logic {
+  background: #0d0a24;
+}
+/* The trail is white: on a white backdrop its edge has to carry it. */
+html.a11y-contrast .child-trail-edge {
+  stroke: #1f1a3d;
+  stroke-width: 13;
+}
+html.a11y-contrast .child-world-logic .child-trail-edge {
+  stroke: #ffffff;
+}
+
+/* --- keyframes ---------------------------------------------------------------- */
+
+/* The stop the child stands on hops gently. */
+@keyframes child-hop {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+.child-hop {
+  animation: child-hop 1.6s ease-in-out infinite;
+}
+
+/* A soft halo under the current stop. */
+@keyframes child-halo {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+.child-halo {
+  animation: child-halo 1.8s ease-out infinite;
+}
+
+/* The speaker button while the screen is being read aloud. */
+@keyframes child-speaking {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(91 75 219 / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgb(91 75 219 / 0);
+  }
+}
+.child-speaking {
+  animation: child-speaking 1.2s ease-in-out infinite;
+}
+
+/* The microphone button while it listens. */
+@keyframes child-listening {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(217 72 58 / 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgb(217 72 58 / 0);
+  }
+}
+.child-listening {
+  animation: child-listening 1s ease-in-out infinite;
+}
+
+/* The flame of the streak flickers a little. */
+@keyframes child-flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(-2deg);
+  }
+  50% {
+    transform: scale(1.12) rotate(3deg);
+  }
+}
+.child-flicker {
+  display: inline-block;
+  animation: child-flicker 1.4s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+
+/* A not-yet-earned badge: the shape of the picture only. */
+.child-silhouette {
+  filter: brightness(0) opacity(0.28);
+}
+html.a11y-contrast .child-silhouette {
+  filter: brightness(0) opacity(0.6);
+}
+
+/* The wooden shelf the treasures stand on. */
+.child-plank {
+  background: linear-gradient(180deg, #e9c48a 0%, #d3a565 100%);
+  box-shadow: 0 4px 0 #b3854a;
+}
+html.a11y-contrast .child-plank {
+  background: #1f1a3d;
+  box-shadow: none;
+}

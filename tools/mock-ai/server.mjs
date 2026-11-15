@@ -19,6 +19,7 @@
  *   MOCK_INVALID_RATE              0..1 share of challenge answers that break the schema on purpose
  *   MOCK_REJECT_RESPONSE_FORMAT=1  answer HTTP 400 when a request carries response_format
  *   MOCK_SEED                      start value of the content counter, default 0
+ *   MOCK_LOG_LIMIT                 how many requests GET /__mock/log remembers, default 50 (1..10000)
  *   MOCK_QUIET=1                   no request log on stdout
  */
 import http from 'node:http';
@@ -42,7 +43,8 @@ export const DEFAULT_PORT = 8787;
 export const FLAG_WORD = 'FLAGME';
 export const REDIRECT_WORD = 'REDIRECTME';
 const MAX_BODY_BYTES = 1024 * 1024;
-const MAX_LOGGED_REQUESTS = 50;
+const DEFAULT_LOGGED_REQUESTS = 50;
+const MAX_LOGGED_REQUESTS = 10000;
 
 // ---------------------------------------------------------------------------
 // Marker protocol
@@ -402,11 +404,13 @@ export function createMockAiServer(options = {}) {
     log: typeof options.log === 'function' ? options.log : () => {},
   };
   const seed = Number.isFinite(Number(options.seed)) ? Math.max(0, Math.floor(Number(options.seed))) : 0;
+  const wantedLog = Math.floor(Number(options.logLimit));
+  const logLimit = Number.isFinite(wantedLog) && wantedLog >= 1 ? Math.min(wantedLog, MAX_LOGGED_REQUESTS) : DEFAULT_LOGGED_REQUESTS;
   const state = { seq: seed, completions: 0, moderations: 0, images: 0, requests: [] };
 
   const remember = (entry) => {
     state.requests.push(entry);
-    if (state.requests.length > MAX_LOGGED_REQUESTS) state.requests.shift();
+    if (state.requests.length > logLimit) state.requests.shift();
   };
 
   const handler = async (req, res) => {
@@ -515,6 +519,7 @@ function main() {
     invalidRate: env.MOCK_INVALID_RATE,
     rejectResponseFormat: env.MOCK_REJECT_RESPONSE_FORMAT === '1',
     seed: env.MOCK_SEED,
+    logLimit: env.MOCK_LOG_LIMIT,
     log: quiet ? undefined : (line) => console.log(line),
   };
   const primary = createMockAiServer(options);

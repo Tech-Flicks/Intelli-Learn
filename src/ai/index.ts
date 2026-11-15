@@ -27,6 +27,8 @@ export { ageStyleCard } from './prompts';
 export { AiError, isAiError } from './errors';
 export type { AiErrorKind } from './errors';
 export type { AiConfigOverride } from './config';
+/** True for an address on this device or the home network; such a server needs no API key. */
+export { isLocalAddress } from './config';
 
 import { resetClientSession } from './client';
 import { resetImageSession } from './extras';

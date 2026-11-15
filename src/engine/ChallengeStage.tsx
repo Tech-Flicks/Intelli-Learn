@@ -156,6 +156,8 @@ export function ChallengeStage(props: ChallengeStageProps): JSX.Element {
           {...(isTap ? { onTapObject } : {})}
           reducedMotion={reducedMotion}
           celebrate={celebrate}
+          // Side by side with a long answer column (a robot program), the picture stays in view while the column scrolls.
+          className="lg:landscape:sticky lg:landscape:top-2"
         />
         <motion.div
           animate={shake}

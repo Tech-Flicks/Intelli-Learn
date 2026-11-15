@@ -17,7 +17,7 @@ export type { PlanOptions } from './plan';
 
 export { placementStatus } from './placement';
 
-export { effectiveControls, getPlayAllowance, startSession, tickSession, endSession } from './limits';
+export { effectiveControls, enabledStrands, getPlayAllowance, startSession, tickSession, endSession } from './limits';
 
 export { getStrandStages, weekStats, weekStartOf } from './stats';
 

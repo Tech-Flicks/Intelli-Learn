@@ -81,7 +81,7 @@ interface Ops {
 }
 
 const SMALL_BUTTON = cx(
-  'flex h-14 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-brand-100 bg-white text-xl font-black text-brand-700',
+  'flex h-14 w-12 shrink-0 items-center justify-center rounded-xl border-2 border-brand-100 bg-white text-xl font-black text-brand-700',
   FOCUS_RING,
 );
 const STEPPER_BUTTON = cx(
@@ -123,7 +123,8 @@ function BlockRow({ block, index, count, depth, ops }: { block: Block; index: nu
         <span aria-hidden="true" className="text-2xl leading-none">
           {CMD_ICON[block.cmd]}
         </span>
-        <span className="min-w-16 flex-1 truncate">{name}</span>
+        {/* A long name ("Turn right" on a phone) takes two lines rather than being cut off. */}
+        <span className="min-w-16 flex-1 break-words leading-tight">{name}</span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <button
             type="button"
